@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>看板重构 · 三个候选方案线框对比</title>
+<!--
+  看板重构的**方案对比线框图**（低精度，不是产品代码）。
+
+  背景：上一版「容器卡 + 子任务环绕」观感认可，但每个主任务独占一大片画布，
+  任务一多就糊。所以真正要解决的问题是**信息密度**：什么在什么时候出现。
+
+  这里把三个候选并排画出来，只画骨架，不画细节 —— 用来选方向，不用来定样式。
+  配色沿用 theme/tokens.ts，但整体压暗，突出"结构"而不是"好看"。
+-->
+<style>
+  :root {
+    --bg: #16161a;
+    --surface: #1d1d22;
+    --raised: #242429;
+    --sunken: #2b2b31;
+    --border: #2e2e36;
+    --border-2: #3d3d47;
+    --text: #e6e6ea;
+    --muted: #9a9aa5;
+    --faint: #6e6e78;
+    --accent: #4c9aff;
+    --warn: #e8b96a;
+    --ok: #3fbf7f;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 12px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { height: 100%; display: flex; flex-direction: column; padding: 18px 22px 22px; }
+
+  header { flex: none; display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  header .note { color: var(--faint); font-size: 12px; }
+
+  .panels { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+
+  .panel {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .panel > .head { flex: none; padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }
+  .panel > .head .t { display: flex; align-items: center; gap: 7px; }
+  .panel > .head .t b { font-size: 13px; }
+  .panel > .head .tag {
+    font-size: 10px; padding: 1px 6px; border-radius: 4px;
+    color: var(--accent); background: rgba(76, 154, 255, 0.13);
+  }
+  .panel > .head .tag.alt { color: var(--faint); background: var(--sunken); }
+  .panel > .head p { margin: 6px 0 0; color: var(--faint); font-size: 11px; line-height: 1.6; }
+  .panel > .head p b { color: var(--muted); font-weight: 600; }
+
+  .screen { flex: 1; min-height: 0; position: relative; padding: 12px; }
+
+  /* ---------- 通用小件 ---------- */
+  .mini {
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--raised);
+    padding: 6px 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .mini .l1 { display: flex; align-items: center; gap: 5px; }
+  .mini .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--faint); flex: none; }
+  .mini .dot.doing { background: var(--accent); }
+  .mini .dot.done { background: var(--ok); }
+  .mini .dot.blocked { background: var(--warn); }
+  .mini .nm {
+    font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mini .sub { font-size: 9.5px; color: var(--faint); display: flex; gap: 5px; align-items: center; }
+  .mini .bar { height: 2px; border-radius: 2px; background: var(--sunken); overflow: hidden; }
+  .mini .bar > i { display: block; height: 100%; background: var(--accent); }
+  .mini.dim { opacity: 0.3; }
+  .mini.hot { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(76, 154, 255, 0.35); }
+
+  .badge {
+    font-size: 9px; line-height: 13px; padding: 0 4px; border-radius: 3px;
+    color: var(--warn); background: rgba(232, 185, 106, 0.14);
+  }
+  .badge.tagname { color: var(--ok); background: rgba(63, 191, 127, 0.13); }
+
+  /* ---------- 方案 A：分列看板 + 卡内子树 + 按需关系层 ---------- */
+  .cols { display: flex; gap: 10px; height: 100%; }
+  .col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  .col > .ch {
+    flex: none; display: flex; align-items: center; gap: 6px;
+    font-size: 10.5px; color: var(--muted); padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  }
+  .col > .ch .n { color: var(--faint); }
+  .col .stack { display: flex; flex-direction: column; gap: 6px; }
+
+  /* 卡内的子任务：缩进 + 左侧细线，不额外占列宽 */
+  .kids {
+    margin-top: 5px;
+    padding-left: 8px;
+    border-left: 1px solid var(--border-2);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .kid {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10px; color: var(--muted);
+    padding: 3px 5px; border-radius: 4px; background: var(--sunken);
+  }
+  .kid .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 关系覆盖层：只在聚焦时出现 */
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  .hint {
+    position: absolute; left: 12px; bottom: 10px; right: 12px;
+    font-size: 10px; color: var(--faint); line-height: 1.6;
+  }
+
+  /* ---------- 方案 B：大纲树 + 关系侧栏 ---------- */
+  .tree-split { display: flex; gap: 10px; height: 100%; }
+  .tree { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 6px; border-radius: 5px; font-size: 11px;
+    border: 1px solid transparent;
+  }
+  .row .car { color: var(--faint); font-size: 8px; width: 8px; flex: none; }
+  .row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row.sel { background: rgba(76, 154, 255, 0.12); border-color: rgba(76, 154, 255, 0.4); }
+  .row.d1 { padding-left: 20px; }
+  .row.d2 { padding-left: 36px; }
+  .row .meta { font-size: 9.5px; color: var(--faint); display: flex; gap: 5px; }
+
+  .side { width: 132px; flex: none; display: flex; flex-direction: column; gap: 9px; }
+  .side .box { border: 1px solid var(--border); border-radius: 7px; padding: 7px; background: var(--raised); }
+  .side .box h5 { margin: 0 0 5px; font-size: 9.5px; color: var(--faint); font-weight: 600; }
+  .side .box .it { font-size: 10px; color: var(--muted); padding: 2px 0; display: flex; gap: 5px; align-items: center; }
+  .side .box .it .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--faint); flex: none; }
+
+  /* ---------- 方案 C：时间轴泳道 ---------- */
+  .lanes { position: relative; height: 100%; }
+  .lane { display: flex; align-items: center; gap: 8px; height: 92px; }
+  .lane .lname { width: 62px; flex: none; font-size: 10px; color: var(--muted); }
+  .lane .track { flex: 1; position: relative; height: 100%; border-top: 1px dashed var(--border); }
+  .lane .cardx {
+    position: absolute; top: 24px; width: 96px;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--raised); padding: 5px 6px;
+    font-size: 10px;
+  }
+  .lane .cardx .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lane .cardx .sub { color: var(--faint); font-size: 9px; }
+  .axis { position: absolute; left: 62px; right: 0; bottom: 16px; display: flex; justify-content: space-between; font-size: 9.5px; color: var(--faint); }
+  .now { position: absolute; top: 0; bottom: 22px; border-left: 1px dashed var(--accent); opacity: 0.6; }
+  .now span { position: absolute; top: -2px; left: 4px; font-size: 9px; color: var(--accent); }
+
+  /* ---------- 底部对比条 ---------- */
+  .panel > .foot {
+    flex: none; border-top: 1px solid var(--border);
+    padding: 10px 14px; display: flex; flex-direction: column; gap: 5px;
+  }
+  .panel > .foot .kv { display: flex; gap: 6px; font-size: 10.5px; color: var(--faint); }
+  .panel > .foot .kv b { color: var(--muted); font-weight: 600; width: 52px; flex: none; }
+  .panel > .foot .kv .stars { color: var(--accent); letter-spacing: 1px; }
+  .panel > .foot .kv .stars.dim { color: var(--border-2); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>看板重构 · 三个候选方案</h1>
+    <span class="note">
+      线框图，只看结构不看样式。三者的差别是「什么在什么时候出现」——
+      扛量能力就取决于这一点，而不是卡片长什么样。
+    </span>
+  </header>
+
+  <div class="panels">
+
+    <!-- ============ 方案 A ============ -->
+    <section class="panel">
+      <div class="head">
+        <div class="t"><b>A · 分列看板 + 卡内子树 + 按需关系层</b><span class="tag">推荐</span></div>
+        <p>
+          平时是一列列紧凑卡片，<b>主任务的子任务缩进在卡片内部</b>，不额外占地方；
+          <b>关系线默认不画</b>，悬停某张卡时才浮出一层连线，看完就收。
+        </p>
+      </div>
+
+      <div class="screen">
+        <div class="cols">
+          <div class="col">
+            <div class="ch">待办 <span class="n">7</span></div>
+            <div class="stack">
+              <div class="mini dim">
+                <div class="l1"><i class="dot"></i><span class="nm">依赖箭头的样式</span></div>
+                <div class="sub">截止 4/20 · #动画</div>
+              </div>
+              <div class="mini dim">
+                <div class="l1"><i class="dot"></i><span class="nm">3D 倾斜与透视</span></div>
+                <div class="sub">创建 4/05 · #视觉</div>
+              </div>
+              <div class="mini dim">
+                <div class="l1"><i class="dot"></i><span class="nm">层级缩放衰减</span></div>
+                <div class="sub">创建 4/08</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="ch">进行中 <span class="n">5</span></div>
+            <div class="stack">
+              <div class="mini hot">
+                <div class="l1"><i class="dot doing"></i><span class="nm">关系连线与箭头</span></div>
+                <div class="sub"><span class="badge">子任务 2</span><span class="badge tagname">#动画</span></div>
+                <div class="bar"><i style="width: 40%"></i></div>
+                <div class="kids">
+                  <div class="kid"><i class="dot"></i><span class="nm">依赖箭头的样式</span></div>
+                  <div class="kid"><i class="dot doing"></i><span class="nm">流动虚线的速度</span></div>
+                </div>
+              </div>
+              <div class="mini dim">
+                <div class="l1"><i class="dot doing"></i><span class="nm">飞出动画曲线调优</span></div>
+                <div class="sub">截止 4/12</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="ch">已完成 <span class="n">9</span></div>
+            <div class="stack">
+              <div class="mini dim">
+                <div class="l1"><i class="dot done"></i><span class="nm">设计容器卡视觉语言</span></div>
+                <div class="sub">完成 4/09</div>
+              </div>
+              <div class="mini dim">
+                <div class="l1"><i class="dot done"></i><span class="nm">配色令牌统一</span></div>
+                <div class="sub">完成 4/07</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 关系覆盖层：只在悬停时出现 -->
+        <svg class="overlay" viewBox="0 0 460 600" preserveAspectRatio="none">
+          <path d="M150 250 Q 150 380 250 400" fill="none" stroke="#e8b96a" stroke-width="1.4" stroke-dasharray="4 5" />
+          <path d="M250 300 Q 330 150 380 120" fill="none" stroke="#e8b96a" stroke-width="1.4" stroke-dasharray="4 5" />
+          <path d="M250 330 Q 120 430 95 470" fill="none" stroke="#3fbf7f" stroke-width="1.2" stroke-dasharray="1 5" />
+        </svg>
+
+        <div class="hint">↑ 悬停「关系连线与箭头」时：前置（琥珀虚线）／同标签（绿点线）浮出，其余卡片退灰</div>
+      </div>
+
+      <div class="foot">
+        <div class="kv"><b>扛量</b><span class="stars">★★★★<span class="dim">★</span></span><span>一屏几十张卡；列内滚动，无上限压力</span></div>
+        <div class="kv"><b>关系</b><span>父子=卡内缩进（永久可见）；依赖/标签=悬停浮层（按需可见）</span></div>
+        <div class="kv"><b>代价</b><span>骨架接近常规看板，"不普通"要靠动画与聚焦层来做</span></div>
+      </div>
+    </section>
+
+    <!-- ============ 方案 B ============ -->
+    <section class="panel">
+      <div class="head">
+        <div class="t"><b>B · 大纲树 + 关系侧栏</b><span class="tag alt">最扛量</span></div>
+        <p>
+          左边一棵可折叠的树（主任务→子任务→孙任务），右边是选中任务的关系面板。
+          <b>关系不用画线，用文字列表表达</b>，所以再多也不乱。
+        </p>
+      </div>
+
+      <div class="screen">
+        <div class="tree-split">
+          <div class="tree">
+            <div class="row d0"><span class="car">▼</span><span class="dot doing" style="width:5px;height:5px;border-radius:50%"></span><span class="nm">重构看板的关系可视化</span><span class="meta">1/6</span></div>
+            <div class="row d1"><span class="car"> </span><span class="dot done" style="width:5px;height:5px;border-radius:50%"></span><span class="nm">设计容器卡视觉语言</span></div>
+            <div class="row d1 sel"><span class="car">▼</span><span class="dot doing" style="width:5px;height:5px;border-radius:50%"></span><span class="nm">关系连线与箭头</span><span class="meta">0/2</span></div>
+            <div class="row d2"><span class="car"> </span><span class="dot" style="width:4px;height:4px;border-radius:50%"></span><span class="nm">依赖箭头的样式</span></div>
+            <div class="row d2"><span class="car"> </span><span class="dot doing" style="width:4px;height:4px;border-radius:50%"></span><span class="nm">流动虚线的速度</span></div>
+            <div class="row d1"><span class="car"> </span><span class="dot" style="width:5px;height:5px;border-radius:50%"></span><span class="nm">悬停聚焦与背景退让</span></div>
+            <div class="row d1"><span class="car"> </span><span class="dot doing" style="width:5px;height:5px;border-radius:50%"></span><span class="nm">飞出动画曲线调优</span></div>
+            <div class="row d0"><span class="car">▶</span><span class="dot blocked" style="width:5px;height:5px;border-radius:50%"></span><span class="nm">任务卡片的立体化</span><span class="meta">0/3</span></div>
+            <div class="row d0"><span class="car">▶</span><span class="dot doing" style="width:5px;height:5px;border-radius:50%"></span><span class="nm">任务详情与就地编辑</span><span class="meta">0/2</span></div>
+          </div>
+
+          <div class="side">
+            <div class="box">
+              <h5>前置（挡着我）</h5>
+              <div class="it"><i class="dot blocked"></i>设计容器卡视觉语言</div>
+            </div>
+            <div class="box">
+              <h5>后续（我挡着）</h5>
+              <div class="it"><i class="dot"></i>依赖箭头的样式</div>
+            </div>
+            <div class="box">
+              <h5>标签</h5>
+              <div class="it"><i class="dot" style="background:#3fbf7f"></i>#动画</div>
+            </div>
+            <div class="box">
+              <h5>里程碑</h5>
+              <div class="it"><i class="dot"></i>M2 看板重构</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="foot">
+        <div class="kv"><b>扛量</b><span class="stars">★★★★★</span><span>几百上千条都没问题（就是文件树）</span></div>
+        <div class="kv"><b>关系</b><span>父子=缩进树；依赖/标签/里程碑=右侧文字列表，可点着跳</span></div>
+        <div class="kv"><b>代价</b><span>最"工具"、最不炫；你之前要的立体与动画几乎没有承载空间</span></div>
+      </div>
+    </section>
+
+    <!-- ============ 方案 C ============ -->
+    <section class="panel">
+      <div class="head">
+        <div class="t"><b>C · 时间轴泳道</b><span class="tag alt">最贴排期</span></div>
+        <p>
+          横向是时间、纵向是里程碑（或主任务），卡片按截止日摆。<b>前置依赖天然从左到右</b>，
+          不用绕来绕去，一眼能看出"谁挡着谁在时间上的后果"。
+        </p>
+      </div>
+
+      <div class="screen">
+        <div class="lanes">
+          <div class="lane">
+            <div class="lname">M2 看板</div>
+            <div class="track">
+              <div class="cardx" style="left: 2%"><div class="nm">容器卡视觉</div><div class="sub">4/02 – 4/09</div></div>
+              <div class="cardx" style="left: 30%"><div class="nm">关系连线</div><div class="sub">4/03 – 4/15</div></div>
+              <div class="cardx" style="left: 58%"><div class="nm">悬停聚焦</div><div class="sub">4/04 – 4/20</div></div>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="lname">M3 立体</div>
+            <div class="track">
+              <div class="cardx" style="left: 40%"><div class="nm">卡片厚度</div><div class="sub">4/10 – 4/22</div></div>
+              <div class="cardx" style="left: 68%"><div class="nm">透视网格</div><div class="sub">4/16 – 4/26</div></div>
+            </div>
+          </div>
+          <div class="lane">
+            <div class="lname">M4 详情</div>
+            <div class="track">
+              <div class="cardx" style="left: 22%"><div class="nm">详情抽屉</div><div class="sub">4/06 – 4/18</div></div>
+            </div>
+          </div>
+
+          <svg class="overlay" viewBox="0 0 460 340" preserveAspectRatio="none">
+            <!-- 前置：左上 → 右下 -->
+            <path d="M78 62 Q 120 100 150 118" fill="none" stroke="#e8b96a" stroke-width="1.4" stroke-dasharray="4 5" />
+            <path d="M196 118 Q 250 130 262 196" fill="none" stroke="#e8b96a" stroke-width="1.4" stroke-dasharray="4 5" />
+            <path d="M118 236 Q 140 160 190 120" fill="none" stroke="#e8b96a" stroke-width="1.4" stroke-dasharray="4 5" />
+            <!-- 父子：同泳道内的短连线 -->
+            <path d="M70 78 Q 90 96 130 96" fill="none" stroke="#4c9aff" stroke-width="1.2" />
+          </svg>
+
+          <div class="now" style="left: 46%"><span>今天</span></div>
+          <div class="axis">
+            <span>4/01</span><span>4/08</span><span>4/15</span><span>4/22</span><span>4/30</span>
+          </div>
+        </div>
+        <div class="hint" style="bottom: 2px">↑ 琥珀虚线=前置依赖（左→右即"先做谁"）；蓝线=父子；竖虚线=今天</div>
+      </div>
+
+      <div class="foot">
+        <div class="kv"><b>扛量</b><span class="stars">★★★<span class="dim">★★</span></span><span>受时间跨度限制：同一天挤太多卡就会叠</span></div>
+        <div class="kv"><b>关系</b><span>依赖=空间上从左到右（最直观）；父子=同泳道内缩进/连线</span></div>
+        <div class="kv"><b>代价</b><span>没排期的任务无处安放；对"里程碑"结构的依赖较重</span></div>
+      </div>
+    </section>
+
+  </div>
+</div>
+</body>
+</html>

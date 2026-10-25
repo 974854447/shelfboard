@@ -1,0 +1,1643 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>看板原型 · 容器卡 + 子任务环绕</title>
+<!--
+  看板重构的**静态原型**（design mock），不是产品代码，不参与构建。
+
+  这一版的重点（按用户反馈改的）：
+  1. **样式克制**：卡片回归平面 —— 静置无阴影、无渐变、无发光；主任务靠"左侧一条细强调线"
+     和尺寸区分，而不是整块着色。网格底纹减淡，去掉两团光晕。
+  2. **内容不克制**：卡片上信息反而加厚（子任务进度、完成比、创建/截止时间、标签、前置数），
+     "简洁"指的是视觉噪音少，不是内容少。
+  3. **详情这条路不能丢**：**点卡片 = 打开任务详情抽屉**；展开/折叠改由卡片上的
+     「子任务 N ⌄」按钮承担（手势分开，互不抢占）。抽屉里点前置/子任务可以就地跳过去。
+
+  配色抄的是 packages/desktop/src/renderer/src/theme/tokens.ts，观感与真实应用一致。
+
+  交互：
+  - 点卡片            → 打开任务详情抽屉（Esc / 点遮罩关闭）
+  - 点「子任务 N ⌄」  → 展开或折叠下一层（卡片飞出/飞回）
+  - 悬停任意卡片      → 关系聚焦（两级退让）
+  - 右栏按钮          → 全部展开 / 折叠 / 聚焦演示 / 亮暗主题
+  - URL hash 也能控制，便于截图：
+    #expand=A,A2&focus=A2b&drawer=A2b&theme=light&check=1
+-->
+<style>
+  /* ---------- 设计令牌（与 theme/tokens.ts 对齐的最小集） ---------- */
+  .theme-dark {
+    --bg: #16161a;
+    --surface: #1d1d22;
+    --raised: #242429;
+    --sunken: #2b2b31;
+    --border: #2e2e36;
+    --border-strong: #3d3d47;
+    --text: #e6e6ea;
+    --text-muted: #9a9aa5;
+    --text-faint: #6e6e78;
+    --accent: #4c9aff;
+    --accent-soft: rgba(76, 154, 255, 0.14);
+    --danger: #f0756f;
+    --warn: #e8b96a;
+    --ok: #3fbf7f;
+    --card-hover-shadow: 0 6px 18px rgba(0, 0, 0, 0.26);
+    --card-focus-shadow: 0 8px 22px rgba(0, 0, 0, 0.32);
+    --overlay: rgba(0, 0, 0, 0.42);
+    --grid-line: rgba(120, 160, 255, 0.055);
+  }
+
+  .theme-light {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --raised: #ffffff;
+    --sunken: #eef0f4;
+    --border: #e3e6ec;
+    --border-strong: #cfd4dd;
+    --text: #1f2329;
+    --text-muted: #646c7a;
+    --text-faint: #9aa1ad;
+    --accent: #2b6cd4;
+    --accent-soft: rgba(43, 108, 212, 0.10);
+    --danger: #d94b41;
+    --warn: #b5772a;
+    --ok: #1f9254;
+    --card-hover-shadow: 0 6px 16px rgba(16, 24, 40, 0.10);
+    --card-focus-shadow: 0 8px 20px rgba(16, 24, 40, 0.14);
+    --overlay: rgba(16, 24, 40, 0.28);
+    --grid-line: rgba(43, 108, 212, 0.07);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; margin: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 13px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    /* 令牌挂在 #app 上，底色也必须在这里兜住（body 取不到 --bg） */
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  /* ---------- 顶栏 ---------- */
+  .top {
+    flex: none;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .top .brand { font-weight: 600; }
+  .top .sep { width: 1px; height: 18px; background: var(--border); }
+  .top .hint { color: var(--text-faint); font-size: 12px; }
+  .top .spacer { flex: 1; }
+  .top .mock-badge {
+    font-size: 11px;
+    color: var(--text-faint);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 9px;
+  }
+
+  main { flex: 1; min-height: 0; display: flex; }
+
+  .stage-wrap {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  /* 画布：固定设计尺寸，再由 fit() 整体缩放塞进窗口（相当于"适应窗口"） */
+  .stage {
+    position: relative;
+    width: 1240px;
+    height: 900px;
+    flex: none;
+    perspective: 1500px;
+    transform-style: preserve-3d;
+    transform-origin: center center;
+  }
+
+  /* 景深只靠一层很淡的透视网格，不再叠光晕（光晕是最"刺眼"的部分） */
+  .grid-bg {
+    position: absolute;
+    inset: -30% -12% -12% -12%;
+    background-image:
+      repeating-linear-gradient(to right, var(--grid-line) 0 1px, transparent 1px 64px),
+      repeating-linear-gradient(to bottom, var(--grid-line) 0 1px, transparent 1px 64px);
+    transform: perspective(760px) rotateX(63deg) scale(1.3);
+    transform-origin: 50% 42%;
+    -webkit-mask-image: radial-gradient(ellipse 60% 56% at 50% 44%, #000 16%, transparent 76%);
+    mask-image: radial-gradient(ellipse 60% 56% at 50% 44%, #000 16%, transparent 76%);
+    pointer-events: none;
+  }
+
+  /* ---------- 里程碑区域带：只留虚线边框，不填充 ---------- */
+  .milestone {
+    position: absolute;
+    border: 1px dashed color-mix(in srgb, var(--border-strong) 62%, transparent);
+    border-radius: 18px;
+    transition: opacity 0.3s ease, border-color 0.3s ease;
+  }
+  .milestone > .ms-label {
+    position: absolute;
+    top: -10px;
+    left: 16px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    color: var(--text-faint);
+    background: var(--bg);
+    white-space: nowrap;
+  }
+  .milestone.rel > .ms-label { color: var(--text-muted); }
+
+  /* ---------- 连线层 ---------- */
+  svg.lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  svg.lines.back { z-index: 2; }
+  /* 前景层：同一条依赖线用极低不透明度再画一遍，制造"连线从卡片前后穿过"的错觉 */
+  svg.lines.front { z-index: 6; opacity: 0.2; }
+
+  .cord { fill: none; stroke: var(--accent); stroke-opacity: 0.42; stroke-width: 1.2; }
+  .dep { fill: none; stroke: var(--warn); stroke-opacity: 0.85; stroke-width: 1.5; stroke-linecap: round; }
+  .dep-flow {
+    fill: none; stroke: var(--warn); stroke-width: 1.5; stroke-linecap: round;
+    stroke-dasharray: 4 14; animation: ants 1.3s linear infinite;
+  }
+  .taglink { fill: none; stroke: var(--ok); stroke-opacity: 0.5; stroke-width: 1.1; stroke-dasharray: 1.5 7; stroke-linecap: round; }
+  @keyframes ants { to { stroke-dashoffset: -36; } }
+
+  .line-label {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    padding: 0 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+    z-index: 5;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .line-label.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 32%, transparent); }
+  .line-label.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 32%, transparent); }
+
+  /* ---------- 卡片 ---------- */
+  .cards { position: absolute; inset: 0; z-index: 3; }
+
+  /* slot 管"位置 + 飞出位移"，card 管悬停倾斜，职责分开才不会打架 */
+  .slot {
+    position: absolute;
+    transition:
+      transform 0.5s cubic-bezier(0.22, 1.24, 0.36, 1),
+      opacity 0.28s ease,
+      filter 0.28s ease;
+    will-change: transform, opacity;
+  }
+
+  /*
+    卡片样式刻意做得平：静置时既没有阴影也没有渐变，只有一条 1px 边框。
+    层次靠"边框 + 底色"，不靠发光 —— 这是"简洁、不刺眼"的主要来源。
+  */
+  .card {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    cursor: pointer;
+    transform-style: preserve-3d;
+    transition:
+      transform 0.22s cubic-bezier(0.22, 1.2, 0.36, 1),
+      box-shadow 0.22s ease,
+      border-color 0.22s ease,
+      background 0.22s ease;
+  }
+
+  .card:hover {
+    border-color: var(--border-strong);
+    background: var(--raised);
+    transform: translateY(-3px) rotateX(4deg) rotateY(-3deg);
+    box-shadow: var(--card-hover-shadow);
+  }
+
+  .card:active { transform: translateY(-1px); }
+
+  /* 主任务：左侧一条细强调线 + 尺寸更大，代替整块着色 */
+  .card.container { border-radius: 12px; }
+  .card.container::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 10px;
+    bottom: 10px;
+    width: 2px;
+    border-radius: 0 2px 2px 0;
+    background: color-mix(in srgb, var(--accent) 52%, transparent);
+    transition: background 0.22s ease;
+  }
+  .card.container:hover::before { background: var(--accent); }
+
+  /* 折叠状态的主任务：背后露出两片极淡的纸边，暗示"里面有东西" */
+  .stack { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+  .stack i {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    height: 100%;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+  .stack i:nth-child(1) { top: 5px; transform: scale(0.982); opacity: 0.6; }
+  .stack i:nth-child(2) { top: 10px; transform: scale(0.962); opacity: 0.32; }
+
+  .row1 { display: flex; align-items: center; gap: 7px; min-width: 0; }
+
+  /* kind 不再做成小药丸（少一个框就少一分噪音），就是一行小字 */
+  .kind {
+    font-size: 10.5px;
+    color: var(--text-faint);
+    white-space: nowrap;
+    letter-spacing: 0.2px;
+  }
+  .row1 .spacer { flex: 1; }
+
+  .status {
+    font-size: 10.5px;
+    line-height: 16px;
+    padding: 0 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    color: var(--st, var(--text-muted));
+    background: color-mix(in srgb, var(--st, var(--text-muted)) 13%, transparent);
+  }
+
+  /* ---------- 卡片内部的两种"展开"入口 ---------- */
+
+  /* 主体：信息区。它在 strip 手势下 = 打开详情；在 card 手势下 = 展开/折叠
+     用 space-between 而不是给某一行加 auto 外边距：卡片高度固定、标题行数会变，
+     把多出来的空间均摊到各行之间，看起来是"排版"，不会在中间留一个洞 */
+  .card-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 5px;
+    overflow: hidden;
+  }
+
+  /* 底部横条：整卡宽 × 22px 的"容器开口"。目标是"展开"最不容易点错的地方 */
+  .open-strip {
+    flex: none;
+    height: 22px;
+    margin: 7px -11px -9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding-right: 30px;
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 9px 9px;
+    font-size: 10.5px;
+    color: var(--text-faint);
+    cursor: pointer;
+    transition: background 0.16s ease, color 0.16s ease;
+  }
+  .card.container .open-strip { border-radius: 0 0 11px 11px; }
+  .open-strip:hover { background: var(--sunken); color: var(--text); }
+  .open-strip .strip-label { white-space: nowrap; }
+
+  /* 小角标：只在 badge 手势下出现（上一版的行为，留作对比） */
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font: inherit;
+    font-size: 10.5px;
+    line-height: 16px;
+    padding: 0 6px;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.16s ease, color 0.16s ease;
+  }
+  .toggle:hover { border-color: var(--border-strong); color: var(--text); }
+
+  .chev {
+    display: inline-block;
+    font-size: 8px;
+    transition: transform 0.24s cubic-bezier(0.22, 1.2, 0.36, 1);
+  }
+  .slot.expanded .chev { transform: rotate(180deg); }
+
+  .card .title {
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+  .card.container .title { font-size: 14.5px; }
+
+  /* 子任务进度：一条 3px 细条 + 完成比 */
+  .progress { display: flex; align-items: center; gap: 7px; }
+  .track {
+    flex: 1;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--sunken);
+    overflow: hidden;
+  }
+  .track > i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--accent) 62%, transparent);
+    transition: width 0.4s cubic-bezier(0.22, 1.2, 0.36, 1);
+  }
+  .progress .ratio { font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
+
+  /* 内容行：一行小字，用 · 分隔，不做成一堆小药丸 */
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+    font-size: 10.5px;
+    color: var(--text-faint);
+  }
+  .meta .dot { opacity: 0.5; }
+  .meta .tag { color: color-mix(in srgb, var(--ok) 78%, var(--text-muted)); }
+  .meta .blocked { color: var(--warn); }
+  .meta .due { color: var(--text-muted); }
+
+  /* 悬停才出现的两个小动作（都绝对定位，不占布局、不撑高卡片） */
+  .card-actions {
+    position: absolute;
+    right: 6px;
+    bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .card-actions > * { opacity: 0; transition: opacity 0.16s ease, color 0.16s ease; }
+  .card:hover .card-actions > *,
+  .card:focus-within .card-actions > * { opacity: 1; }
+
+  .grip { font-size: 10px; line-height: 1; color: var(--text-faint); cursor: grab; }
+  .grip:hover { color: var(--text-muted); }
+
+  .kill {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--text-faint);
+    line-height: 0;
+    cursor: pointer;
+  }
+  .kill:hover { color: var(--danger); }
+
+  /* 层级纵深：越深越小越淡 */
+  .slot[data-depth="2"] .card .title { font-size: 12.5px; }
+  .slot[data-depth="2"] { opacity: 0.78; }
+
+  /* ---------- 关系聚焦（两级退让） ---------- */
+  .stage.focusing .slot { opacity: 0.26; filter: blur(1.1px) saturate(0.6); }
+  .stage.focusing .slot.kin { opacity: 0.58; filter: blur(0.5px) saturate(0.8); }
+  .stage.focusing .slot.rel { opacity: 1; filter: none; z-index: 4; }
+  .stage.focusing .milestone { opacity: 0.44; }
+  .stage.focusing .milestone.rel { opacity: 1; }
+  .stage.focusing svg.lines { opacity: 0.2; }
+  .stage.focusing svg.lines .rel { stroke-opacity: 1 !important; }
+  .stage.focusing .line-label { opacity: 0.18; }
+  .stage.focusing .line-label.rel { opacity: 1; }
+
+  /* 被聚焦的卡：抬起来 + 一圈细描边，不做发光 */
+  .slot.focus .card {
+    border-color: var(--accent);
+    transform: translateY(-6px) rotateX(5deg) rotateY(-4deg);
+    box-shadow: var(--card-focus-shadow);
+  }
+  .slot.focus .card.container::before { background: var(--accent); }
+
+  .slot.flying .card { box-shadow: var(--card-hover-shadow); }
+
+  /* ---------- 任务详情抽屉 ----------
+     刻意**不做全屏遮罩**：抽屉一开就把画布锁死的话，"看详情"和"展开子任务"会互相堵住。
+     现在抽屉只是右侧一块面板，画布照常能点、能悬停、能展开。 */
+  .drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    pointer-events: none;
+  }
+  .drawer-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 392px;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -16px 0 40px rgba(0, 0, 0, 0.28);
+    transform: translateX(100%);
+    transition: transform 0.28s cubic-bezier(0.22, 0.95, 0.28, 1);
+  }
+  .drawer.open { pointer-events: auto; }
+  .drawer.open .drawer-panel { transform: none; }
+
+  /* 抽屉正在看的那张卡：描边点亮，一眼知道抽屉对应画布上的谁 */
+  .slot.selected .card { border-color: color-mix(in srgb, var(--accent) 62%, var(--border)); }
+
+  .drawer-head { flex: none; padding: 14px 18px 0; }
+  .drawer-head .line1 { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+  .drawer-head h2 {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 0 0 10px;
+  }
+  .drawer-head .close {
+    margin-left: auto;
+    font: inherit;
+    font-size: 15px;
+    line-height: 1;
+    width: 26px;
+    height: 26px;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color 0.16s ease, border-color 0.16s ease;
+  }
+  .drawer-head .close:hover { color: var(--text); border-color: var(--border-strong); }
+
+  .drawer-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px 18px 22px;
+  }
+  .drawer-body section { margin-bottom: 18px; }
+  .drawer-body h4 {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-faint);
+    letter-spacing: 0.4px;
+    margin: 0 0 7px;
+  }
+  .drawer-body p { margin: 0; color: var(--text-muted); line-height: 1.7; }
+  .drawer-body .kv { display: flex; gap: 8px; font-size: 12px; color: var(--text-muted); line-height: 1.8; }
+  .drawer-body .kv .k { color: var(--text-faint); width: 44px; flex: none; }
+
+  .reflist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .reflist li button {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 6px 9px;
+    cursor: pointer;
+    transition: border-color 0.16s ease, background 0.16s ease;
+  }
+  .reflist li button:hover { border-color: var(--border-strong); background: var(--raised); }
+  .reflist li button .st {
+    margin-left: auto;
+    font-size: 10.5px;
+    color: var(--st, var(--text-muted));
+    white-space: nowrap;
+  }
+  .reflist li button .txt {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chips span {
+    font-size: 11px;
+    color: color-mix(in srgb, var(--ok) 80%, var(--text-muted));
+    border: 1px solid color-mix(in srgb, var(--ok) 26%, transparent);
+    border-radius: 5px;
+    padding: 1px 7px;
+  }
+
+  /* 抽屉打开时内容轻微错峰上浮 */
+  .drawer.open .drawer-body > * {
+    animation: drawer-in 0.32s cubic-bezier(0.22, 1.1, 0.36, 1) both;
+  }
+  .drawer.open .drawer-body > *:nth-child(2) { animation-delay: 0.03s; }
+  .drawer.open .drawer-body > *:nth-child(3) { animation-delay: 0.06s; }
+  .drawer.open .drawer-body > *:nth-child(4) { animation-delay: 0.09s; }
+  .drawer.open .drawer-body > *:nth-child(5) { animation-delay: 0.12s; }
+  @keyframes drawer-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* ---------- 右栏 ---------- */
+  .rail {
+    flex: none;
+    width: 300px;
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    padding: 14px 16px 18px;
+    overflow-y: auto;
+  }
+  .rail h2 { font-size: 13px; margin: 0 0 4px; }
+  .rail .sub { color: var(--text-faint); font-size: 11.5px; margin: 0 0 12px; line-height: 1.65; }
+  .rail .sub b { color: var(--text-muted); font-weight: 600; }
+  .rail .ctrls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .rail button {
+    font: inherit;
+    font-size: 12px;
+    color: var(--text);
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: border-color 0.16s ease, transform 0.1s ease;
+  }
+  .rail button:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+  .rail button.primary { border-color: color-mix(in srgb, var(--accent) 42%, transparent); color: var(--accent); }
+  .rail button.on {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .legend li { display: grid; grid-template-columns: 16px 1fr; gap: 8px; font-size: 12px; line-height: 1.55; color: var(--text-muted); }
+  .legend b { color: var(--text); font-weight: 600; }
+  .legend .mk { display: flex; align-items: flex-start; justify-content: center; padding-top: 5px; }
+  .legend .swatch { width: 13px; height: 3px; border-radius: 2px; }
+  .legend .swatch.accent { background: var(--accent); }
+  .legend .swatch.warn { background: var(--warn); }
+  .legend .swatch.ok { background: var(--ok); }
+  .legend .swatch.ms { width: 13px; height: 11px; border: 1px dashed var(--border-strong); border-radius: 4px; }
+
+  .rail .foot {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 11.5px;
+    line-height: 1.65;
+  }
+</style>
+</head>
+<body>
+<div id="app" class="theme-dark">
+  <header class="top">
+    <span class="brand">项目管理系统</span>
+    <span class="sep"></span>
+    <span class="hint">项目：pm-studio · 看板</span>
+    <span class="spacer"></span>
+    <span class="mock-badge">静态原型 · 非产品代码</span>
+  </header>
+
+  <main>
+    <div class="stage-wrap">
+      <div class="stage" id="stage">
+        <div class="grid-bg"></div>
+        <div class="milestones" id="milestones"></div>
+        <svg class="lines back" id="linesBack"></svg>
+        <svg class="lines front" id="linesFront"></svg>
+        <div class="cards" id="cards"></div>
+      </div>
+    </div>
+
+    <aside class="rail">
+      <h2>这一版改了什么</h2>
+      <p class="sub">
+        样式压平了：卡片静置无阴影无渐变，主任务只靠左侧一条细线和尺寸区分，
+        网格减淡、去掉光晕。但<b>内容加厚了</b> —— 进度、完成比、时间、标签都在卡片上。
+      </p>
+      <p class="sub">
+        交互分开：<b>点卡片 = 打开任务详情</b>，<b>点「子任务 N」 = 展开/折叠</b>。
+        抽屉里点前置任务或子任务可以就地跳过去。
+      </p>
+
+      <p class="sub">
+        <b>点卡片</b>是"开详情"还是"展开子任务"？三种都做了，点着试一下再定：
+      </p>
+      <div class="ctrls">
+        <button data-gesture="strip">底部横条展开</button>
+        <button data-gesture="card">点卡片展开</button>
+        <button data-gesture="badge">小角标展开</button>
+      </div>
+
+      <div class="ctrls">
+        <button id="btn-expand" class="primary">全部展开</button>
+        <button id="btn-collapse">全部折叠</button>
+        <button id="btn-demo">聚焦演示</button>
+        <button id="btn-theme">切亮色</button>
+      </div>
+
+      <ul class="legend">
+        <li>
+          <span class="mk"><span class="swatch accent"></span></span>
+          <span><b>父子脐带线</b>：从主任务卡片背后伸向子任务，展开时「生长」出来；子任务绕在四角，空间上表示归属。</span>
+        </li>
+        <li>
+          <span class="mk"><span class="swatch warn"></span></span>
+          <span><b>前置依赖</b>：琥珀色虚线 + 箭头标方向，线上光点流动。</span>
+        </li>
+        <li>
+          <span class="mk"><span class="swatch ok"></span></span>
+          <span><b>标签关联</b>：绿色点线，弱关系，默认更淡。</span>
+        </li>
+        <li>
+          <span class="mk"><span class="swatch ms"></span></span>
+          <span><b>里程碑</b>：虚线区域带圈住同一里程碑的任务（只留边框，不填充）。</span>
+        </li>
+        <li>
+          <span class="mk" style="color: var(--accent)">◉</span>
+          <span><b>关系聚焦</b>：悬停一张卡 —— 祖先链、后代、依赖方、同标签全亮；同里程碑邻居退一半；无关的退到背景。</span>
+        </li>
+        <li>
+          <span class="mk" style="color: var(--text-muted)">▤</span>
+          <span><b>层级纵深</b>：子任务小一档、孙任务更小更淡，不看缩进也知道属于谁。</span>
+        </li>
+        <li>
+          <span class="mk" style="color: var(--text-muted)">⠿</span>
+          <span><b>可直接改</b>：把手拖拽改归属、卡片四边端口拖出连线（原型里只占位，未接逻辑）。</span>
+        </li>
+      </ul>
+
+      <div class="foot">
+        容器卡 + 子任务环绕的视觉稿第二版。方向确认后再谈落到真实组件与分几期。
+      </div>
+    </aside>
+  </main>
+
+  <!-- 任务详情抽屉 -->
+  <div class="drawer" id="drawer" aria-hidden="true">
+    <aside class="drawer-panel" role="dialog" aria-label="任务详情">
+      <div class="drawer-head" id="drawerHead"></div>
+      <div class="drawer-body" id="drawerBody"></div>
+    </aside>
+  </div></div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ------------------------------------------------------------------
+     1) 数据
+     ------------------------------------------------------------------ */
+
+  const STATUS = {
+    todo: { label: '待办', color: 'var(--text-faint)' },
+    doing: { label: '进行中', color: 'var(--accent)' },
+    blocked: { label: '被阻塞', color: 'var(--warn)' },
+    done: { label: '已完成', color: 'var(--ok)' },
+  };
+
+  // 容器卡（主任务）：pos 是中心点
+  const CONTAINERS = [
+    {
+      id: 'A', title: '重构看板的关系可视化', status: 'doing',
+      pos: { x: 350, y: 360 }, size: { w: 244, h: 122 },
+      tags: ['看板', '交互'], due: '4/18', created: '4/02',
+      desc: '把主任务/子任务/前置依赖/标签/里程碑这几类关系在同一张画布上讲清楚，' +
+            '并且让"这个任务属于谁、被谁挡着"不靠读文字才知道。',
+    },
+    {
+      id: 'B', title: '任务卡片的立体化', status: 'blocked',
+      pos: { x: 1050, y: 620 }, size: { w: 244, h: 122 },
+      tags: ['视觉'], due: '4/26', created: '4/05', childCount: 3,
+      desc: '卡片厚度、悬停浮起、透视网格。前提是关系可视化先定稿，否则立体化没有承载对象。',
+    },
+    {
+      id: 'C', title: '任务详情与就地编辑', status: 'doing',
+      pos: { x: 1050, y: 250 }, size: { w: 244, h: 122 },      tags: ['详情'], created: '4/08', childCount: 2,
+      desc: '详情抽屉里能改状态、指派人、加标签，并且能点着前置任务一路跳过去。',
+    },
+  ];
+
+  // 子任务：相对父容器中心的偏移（四角环绕）
+  const CHILDREN = [
+    { id: 'A1', parent: 'A', title: '设计容器卡视觉语言', status: 'done', offset: { x: -232, y: -156 }, tags: ['看板'], created: '4/02', done: '4/09' },
+    { id: 'A2', parent: 'A', title: '关系连线与箭头', status: 'doing', offset: { x: 232, y: -156 }, childCount: 2, created: '4/03' },
+    { id: 'A3', parent: 'A', title: '悬停聚焦与背景退让', status: 'todo', offset: { x: 232, y: 156 }, tags: ['动画'], created: '4/04', due: '4/20' },
+    { id: 'A4', parent: 'A', title: '飞出动画的曲线调优', status: 'doing', offset: { x: -232, y: 156 }, created: '4/06', due: '4/12' },
+  ];
+
+  // 孙任务：挂在 A2 下面，演示多层嵌套
+  const GRANDCHILDREN = [
+    { id: 'A2a', parent: 'A2', title: '依赖箭头的样式', status: 'todo', offset: { x: 192, y: -84 }, created: '4/07' },
+    { id: 'A2b', parent: 'A2', title: '流动虚线的速度', status: 'doing', offset: { x: 192, y: 86 }, tags: ['动画'], created: '4/07' },
+  ];
+
+  const DEPS = [
+    { id: 'd1', from: 'A', to: 'B', label: 'A 阻塞 B' },
+    { id: 'd2', from: 'B', to: 'C', label: 'B 阻塞 C', labelOffset: { x: 98, y: 0 } },
+  ];
+
+  const TAG_LINKS = [{ id: 't1', from: 'A2b', to: 'A3', label: '同标签 #动画' }];
+
+  const MILESTONES = [
+    { id: 'M2', label: '里程碑 · M2 看板重构', x: 16, y: 64, w: 850, h: 510, nodes: ['A', 'A1', 'A2', 'A3', 'A4', 'A2a', 'A2b'] },
+    { id: 'M3', label: '里程碑 · M3 立体与动画', x: 880, y: 130, w: 348, h: 610, nodes: ['B', 'C'] },
+  ];
+
+  const CHILD_SIZE = { w: 176, h: 94 };
+  const GRAND_SIZE = { w: 158, h: 80 };
+
+  /* ------------------------------------------------------------------
+     2) 建节点表
+     ------------------------------------------------------------------ */
+
+  const nodes = new Map();
+  const byId = (id) => nodes.get(id);
+
+  for (const c of CONTAINERS) nodes.set(c.id, { ...c, depth: 0, kids: [] });
+
+  for (const ch of CHILDREN) {
+    const p = byId(ch.parent);
+    const n = { ...ch, depth: 1, size: CHILD_SIZE, pos: { x: p.pos.x + ch.offset.x, y: p.pos.y + ch.offset.y }, kids: [] };
+    nodes.set(ch.id, n);
+    p.kids.push(ch.id);
+  }
+
+  for (const g of GRANDCHILDREN) {
+    const p = byId(g.parent);
+    const n = { ...g, depth: 2, size: GRAND_SIZE, pos: { x: p.pos.x + g.offset.x, y: p.pos.y + g.offset.y }, kids: [] };
+    nodes.set(g.id, n);
+    p.kids.push(g.id);
+  }
+
+  for (const n of nodes.values()) {
+    n.ancestors = [];
+    let cur = n.parent ? byId(n.parent) : null;
+    while (cur) { n.ancestors.push(cur.id); cur = cur.parent ? byId(cur.parent) : null; }
+  }
+
+  /*
+    "展开横条"（.open-strip）只长在有子任务的卡片上，所以要等 kids 都建好之后再补高度。
+    没有子任务的卡片就没有横条 —— 没有可展开的东西，就不该画一个展开口。
+  */
+  const STRIP_H = 22;
+  for (const n of nodes.values()) {
+    if (n.kids.length) n.size = { w: n.size.w, h: n.size.h + STRIP_H };
+  }
+
+  /** 子树完成度：有子节点的卡片才显示 */
+  function progressOf(n) {
+    const all = [];
+    const walk = (node) => {
+      for (const k of node.kids) {
+        all.push(byId(k));
+        walk(byId(k));
+      }
+    };
+    walk(n);
+    if (!all.length) return null;
+    const done = all.filter((x) => x.status === 'done').length;
+    return { done, total: all.length, pct: Math.round((done / all.length) * 100) };
+  }
+
+  const rectOf = (n) => ({ x: n.pos.x - n.size.w / 2, y: n.pos.y - n.size.h / 2, w: n.size.w, h: n.size.h });
+
+  /* ------------------------------------------------------------------
+     3) 状态
+     ------------------------------------------------------------------ */
+
+  const state = { expanded: new Set(['A']), focus: null, spotlight: false, drawer: null, gesture: 'strip' };
+
+  const stage = document.getElementById('stage');
+  const cardsLayer = document.getElementById('cards');
+  const msLayer = document.getElementById('milestones');
+  const svgBack = document.getElementById('linesBack');
+  const svgFront = document.getElementById('linesFront');
+  const drawerEl = document.getElementById('drawer');
+  const drawerHead = document.getElementById('drawerHead');
+  const drawerBody = document.getElementById('drawerBody');
+
+  const DESIGN = { w: 1240, h: 900 };
+
+  /** 适应窗口 */
+  function fit() {
+    const wrap = stage.parentElement;
+    const k = Math.min((wrap.clientWidth - 40) / DESIGN.w, (wrap.clientHeight - 40) / DESIGN.h, 1);
+    stage.style.transform = `scale(${k})`;
+    return k;
+  }
+
+  /* ------------------------------------------------------------------
+     4) 渲染卡片
+     ------------------------------------------------------------------ */
+
+  const slots = new Map();
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function metaHtml(n) {
+    const parts = [];
+    if (n.due) parts.push(`<span class="due">截止 ${n.due}</span>`);
+    else if (n.done) parts.push(`<span>完成 ${n.done}</span>`);
+    parts.push(`<span>创建 ${n.created}</span>`);
+    for (const t of n.tags ?? []) parts.push(`<span class="tag">#${esc(t)}</span>`);
+    if (n.id === 'B') parts.push('<span class="blocked">前置 1 项未完成</span>');
+    return parts.join('<span class="dot">·</span>');
+  }
+
+  function renderCard(n) {
+    const r = rectOf(n);
+    const slot = document.createElement('div');
+    slot.className = 'slot';
+    slot.dataset.id = n.id;
+    slot.dataset.depth = String(n.depth);
+    slot.style.left = r.x + 'px';
+    slot.style.top = r.y + 'px';
+    slot.style.width = r.w + 'px';
+    slot.style.height = r.h + 'px';
+
+    const isContainer = n.depth === 0;
+    const st = STATUS[n.status] ?? STATUS.todo;
+    const kids = n.kids.length || n.childCount || 0;
+    const prog = progressOf(n);
+
+    const card = document.createElement('article');
+    card.className = 'card' + (isContainer ? ' container' : '');
+    card.dataset.id = n.id;
+    card.innerHTML = `
+      ${isContainer ? '<div class="stack"><i></i><i></i></div>' : ''}
+      <div class="card-body">
+        <div class="row1">
+          <span class="kind">${isContainer ? '主任务' : n.depth === 1 ? '子任务' : '孙任务'}</span>
+          <span class="status" style="--st:${st.color}">${st.label}</span>
+          ${state.gesture === 'badge' && kids ? `<span class="spacer"></span>
+            <button class="toggle" data-toggle="${n.id}" title="展开子任务"><span class="chev">▼</span>${kids}</button>` : ''}
+        </div>
+        <div class="title">${esc(n.title)}</div>
+        ${prog ? `<div class="progress">
+          <span class="track"><i style="width:${prog.pct}%"></i></span>
+          <span class="ratio">${prog.done}/${prog.total}</span>
+        </div>` : ''}
+        <div class="meta">${metaHtml(n)}</div>
+      </div>
+      ${kids && state.gesture === 'strip' ? `<div class="open-strip" data-toggle="${n.id}" title="展开/折叠子任务">
+        <span class="chev">▼</span><span class="strip-label">子任务 ${kids}</span>
+      </div>` : ''}
+      <div class="card-actions">
+        <span class="grip" title="拖拽可改变父子归属">⠿</span>
+        <button class="kill" title="删除">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+            <path d="M3.6 6.4h16.8" />
+            <rect x="8.9" y="2.6" width="6.2" height="3.8" rx="1.6" />
+            <path d="M5.6 6.4h12.8v12.2a2.2 2.2 0 0 1-2.2 2.2H7.8a2.2 2.2 0 0 1-2.2-2.2z" />
+            <path d="M9.6 10.4v6.4M12 10.4v6.4M14.4 10.4v6.4" />
+          </svg>
+        </button>
+      </div>
+    `;
+
+    /*
+      手势路由（state.gesture）：
+      - strip：底部横条 = 展开/折叠（宽目标，不会点错）；卡片主体 = 打开详情
+      - card ：点卡片任意处 = 展开/折叠（有子任务时）；双击 = 打开详情
+      - badge：卡片主体 = 打开详情；展开只靠标题行上的小角标（上一版的行为，留作对比）
+    */
+    card.addEventListener('click', (ev) => {
+      const t = ev.target.closest('[data-toggle]');
+      if (t) { ev.stopPropagation(); toggle(t.dataset.toggle); return; }
+      if (ev.target.closest('.kill')) { ev.stopPropagation(); flashKill(card); return; }
+      if (ev.target.closest('.grip')) { ev.stopPropagation(); return; }
+
+      if (state.gesture === 'card' && n.kids.length) { toggle(n.id); return; }
+      openDrawer(n.id);
+    });
+
+    // card 手势下：双击开详情（单击已经给了展开，详情只能靠双击或抽屉里的跳转）
+    card.addEventListener('dblclick', (ev) => {
+      if (state.gesture !== 'card' || !n.kids.length) return;
+      ev.stopPropagation();
+      openDrawer(n.id);
+    });
+
+    // 关系聚焦走悬停，跟点击手势完全分开，所以不会互相抢
+    slot.addEventListener('mouseenter', () => {
+      state.focus = n.id;
+      state.spotlight = true;
+      applyFocusClasses();
+    });
+    slot.addEventListener('mouseleave', () => {
+      state.spotlight = false;
+      state.focus = null;
+      applyFocusClasses();
+    });
+
+    slot.appendChild(card);
+    cardsLayer.appendChild(slot);
+    slots.set(n.id, slot);
+  }
+
+  /** 原型不真删数据，点删除给个反馈，避免看起来"没反应" */
+  function flashKill(card) {
+    card.animate(
+      [{ transform: 'translateX(0)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(3px)' }, { transform: 'translateX(0)' }],
+      { duration: 180, easing: 'ease-in-out' },
+    );
+  }
+
+  /** 重建所有卡片（手势模式会改变卡片内的结构，所以切换时要整体重画） */
+  function renderAll() {
+    cardsLayer.innerHTML = '';
+    slots.clear();
+    for (const n of nodes.values()) renderCard(n);
+  }
+
+  renderAll();
+
+  /** 切换手势模式：strip（底部横条展开）/ card（点卡片展开）/ badge（小角标展开，对比用） */
+  function setGesture(mode) {
+    state.gesture = mode;
+    renderAll();
+    applyLayout();
+    document.querySelectorAll('[data-gesture]').forEach((b) => {
+      b.classList.toggle('on', b.dataset.gesture === mode);
+    });
+  }
+
+  /* ------------------------------------------------------------------
+     5) 里程碑
+     ------------------------------------------------------------------ */
+
+  const msEls = new Map();
+
+  for (const m of MILESTONES) {
+    const el = document.createElement('div');
+    el.className = 'milestone';
+    el.dataset.id = m.id;
+    el.style.left = m.x + 'px';
+    el.style.top = m.y + 'px';
+    el.style.width = m.w + 'px';
+    el.style.height = m.h + 'px';
+    el.innerHTML = `<span class="ms-label">${m.label}</span>`;
+    msLayer.appendChild(el);
+    msEls.set(m.id, el);
+  }
+
+  /* ------------------------------------------------------------------
+     6) 展开 / 折叠
+     ------------------------------------------------------------------ */
+
+  function visible(n) {
+    return n.ancestors.every((id) => state.expanded.has(id));
+  }
+
+  function applyLayout() {
+    for (const n of nodes.values()) {
+      const slot = slots.get(n.id);
+      const vis = visible(n);
+      const p = n.parent ? byId(n.parent) : null;
+      const dx = p ? p.pos.x - n.pos.x : 0;
+      const dy = p ? p.pos.y - n.pos.y : 0;
+      const order = p ? p.kids.indexOf(n.id) : 0;
+      const delay = vis ? 50 + order * 60 + n.depth * 40 : 0;
+
+      slot.style.transitionDelay = delay + 'ms';
+      slot.classList.toggle('expanded', state.expanded.has(n.id));
+
+      const toggleBtn = slot.querySelector('[data-toggle]');
+      if (toggleBtn) toggleBtn.title = `${state.expanded.has(n.id) ? '折叠' : '展开'}子任务`;
+
+      if (vis) {
+        slot.style.transform = 'none';
+        slot.style.opacity = '';
+        slot.style.pointerEvents = '';
+      } else {
+        const scale = n.depth === 0 ? 1 : n.depth === 1 ? 0.3 : 0.18;
+        slot.style.transform = `translate(${dx}px, ${dy}px) scale(${scale})`;
+        slot.style.opacity = '0';
+        slot.style.pointerEvents = 'none';
+      }
+    }
+    drawLines();
+  }
+
+  function toggle(id) {
+    const n = byId(id);
+    if (!n || !n.kids.length) return;
+    if (state.expanded.has(id)) {
+      state.expanded.delete(id);
+      for (const k of n.kids) state.expanded.delete(k);
+    } else {
+      state.expanded.add(id);
+    }
+    applyLayout();
+    animateFor(1100);
+  }
+
+  /* ------------------------------------------------------------------
+     7) 连线
+     ------------------------------------------------------------------ */
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const svgEl = (tag, attrs) => {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs ?? {})) el.setAttribute(k, v);
+    return el;
+  };
+
+  /** 槽位在画布坐标系里的矩形（含过渡中的位置）；画布被 scale 过，换算回设计坐标 */
+  function liveRect(id) {
+    const slot = slots.get(id);
+    const a = slot.getBoundingClientRect();
+    const b = stage.getBoundingClientRect();
+    const k = b.width / DESIGN.w || 1;
+    return {
+      cx: (a.left - b.left + a.width / 2) / k,
+      cy: (a.top - b.top + a.height / 2) / k,
+      x: (a.left - b.left) / k,
+      y: (a.top - b.top) / k,
+      w: a.width / k,
+      h: a.height / k,
+    };
+  }
+
+  const lineLabels = new Map();
+  const labelDefs = [...DEPS, ...TAG_LINKS];
+
+  for (const d of labelDefs) {
+    const el = document.createElement('div');
+    el.className = 'line-label' + (TAG_LINKS.includes(d) ? ' ok' : ' warn');
+    el.dataset.key = d.id;
+    el.textContent = d.label;
+    stage.appendChild(el);
+    lineLabels.set(d.id, el);
+  }
+
+  const flowDots = [];
+  const motionPaths = new Map();
+
+  function buildStaticLines() {
+    svgBack.innerHTML = '';
+    svgFront.innerHTML = '';
+    flowDots.length = 0;
+
+    const defs = svgEl('defs');
+    defs.innerHTML = `
+      <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 z" fill="var(--warn)" />
+      </marker>
+    `;
+    svgBack.appendChild(defs);
+
+    for (const n of nodes.values()) {
+      if (!n.parent) continue;
+      svgBack.appendChild(svgEl('path', { class: 'cord', 'data-from': n.parent, 'data-to': n.id }));
+    }
+
+    for (const d of DEPS) {
+      svgBack.appendChild(svgEl('path', { class: 'dep', 'data-dep': d.id, 'data-from': d.from, 'data-to': d.to, 'marker-end': 'url(#arrow)' }));
+      svgBack.appendChild(svgEl('path', { class: 'dep-flow', 'data-dep': d.id, 'data-from': d.from, 'data-to': d.to }));
+      svgFront.appendChild(svgEl('path', { class: 'dep', 'data-dep': d.id, 'data-from': d.from, 'data-to': d.to }));
+
+      const dot = svgEl('circle', { r: 2.4, fill: 'var(--warn)', 'data-dep': d.id, 'data-from': d.from, 'data-to': d.to });
+      const mo = svgEl('animateMotion', { dur: '2.8s', repeatCount: 'indefinite', rotate: 'auto' });
+      const mp = svgEl('mpath');
+      mo.appendChild(mp);
+      dot.appendChild(mo);
+      svgBack.appendChild(dot);
+      flowDots.push({ dot, mp, dep: d.id });
+    }
+
+    for (const t of TAG_LINKS) {
+      svgBack.appendChild(svgEl('path', { class: 'taglink', 'data-tag': t.id, 'data-from': t.from, 'data-to': t.to }));
+    }
+  }
+
+  /** 连线路径：中心到中心的二次曲线（线画在卡片下层，看起来就是从卡片背后伸出来） */
+  function cordPath(from, to) {
+    const a = liveRect(from);
+    const b = liveRect(to);
+    const mx = (a.cx + b.cx) / 2;
+    const my = (a.cy + b.cy) / 2;
+    const dx = b.cx - a.cx;
+    const dy = b.cy - a.cy;
+    const len = Math.hypot(dx, dy) || 1;
+    const bow = Math.min(40, len * 0.2);
+    const nx = -dy / len;
+    const ny = dx / len;
+    return `M ${a.cx} ${a.cy} Q ${mx + nx * bow} ${my + ny * bow} ${b.cx} ${b.cy}`;
+  }
+
+  function ensureMotionPath(dep, sourcePath) {
+    let p = motionPaths.get(dep.id);
+    if (!p) {
+      p = svgEl('path', { id: 'motion-' + dep.id, fill: 'none', stroke: 'none' });
+      svgBack.appendChild(p);
+      motionPaths.set(dep.id, p);
+    }
+    p.setAttribute('d', sourcePath.getAttribute('d'));
+    return p.id;
+  }
+
+  function drawLines() {
+    for (const p of svgBack.querySelectorAll('path.cord')) {
+      const from = p.dataset.from;
+      const to = p.dataset.to;
+      const vis = visible(byId(to)) && visible(byId(from));
+      p.setAttribute('d', cordPath(from, to));
+
+      let total = 0;
+      try { total = p.getTotalLength(); } catch { total = 0; }
+      if (p.dataset.len !== String(Math.round(total)) || p.dataset.vis !== String(vis)) {
+        p.dataset.len = String(Math.round(total));
+        p.dataset.vis = String(vis);
+        p.style.strokeDasharray = `${total}`;
+        p.style.strokeDashoffset = vis ? '0' : String(total);
+        p.style.transition = `stroke-dashoffset 0.42s ease ${vis ? 230 : 0}ms, opacity 0.24s ease`;
+        p.style.opacity = vis ? '1' : '0';
+      }
+    }
+
+    for (const sel of ['path.dep', 'path.dep-flow']) {
+      for (const p of svgBack.querySelectorAll(sel)) {
+        p.setAttribute('d', cordPath(p.dataset.from, p.dataset.to));
+        p.style.opacity = visible(byId(p.dataset.from)) && visible(byId(p.dataset.to)) ? '' : '0';
+      }
+    }
+    for (const p of svgFront.querySelectorAll('path.dep')) {
+      p.setAttribute('d', cordPath(p.dataset.from, p.dataset.to));
+      p.style.opacity = visible(byId(p.dataset.from)) && visible(byId(p.dataset.to)) ? '' : '0';
+    }
+
+    for (const fd of flowDots) {
+      const dep = DEPS.find((x) => x.id === fd.dep);
+      const pathEl = svgBack.querySelector(`path.dep[data-dep="${fd.dep}"]`);
+      if (!pathEl || !dep) continue;
+      fd.mp.setAttribute('href', '#' + ensureMotionPath(dep, pathEl));
+      fd.dot.style.opacity = visible(byId(dep.from)) && visible(byId(dep.to)) ? '' : '0';
+    }
+
+    for (const p of svgBack.querySelectorAll('path.taglink')) {
+      p.setAttribute('d', cordPath(p.dataset.from, p.dataset.to));
+      const vis = visible(byId(p.dataset.from)) && visible(byId(p.dataset.to));
+      p.style.opacity = vis ? '' : '0';
+      p.style.display = vis ? '' : 'none';
+    }
+
+    for (const d of labelDefs) {
+      const el = lineLabels.get(d.id);
+      const a = liveRect(d.from);
+      const b = liveRect(d.to);
+      const off = d.labelOffset ?? { x: 0, y: -13 };
+      el.style.left = (a.cx + b.cx) / 2 + off.x + 'px';
+      el.style.top = (a.cy + b.cy) / 2 + off.y + 'px';
+      el.style.display = visible(byId(d.from)) && visible(byId(d.to)) ? '' : 'none';
+    }
+
+    applyFocusClasses();
+  }
+
+  /* ------------------------------------------------------------------
+     8) 关系聚焦
+     ------------------------------------------------------------------ */
+
+  /** 一度关系：祖先链、后代、依赖、标签 —— 聚焦时全亮 */
+  function relatedOf(id) {
+    const out = new Set([id]);
+    const n = byId(id);
+    if (!n) return out;
+
+    for (const a of n.ancestors) out.add(a);
+
+    const walk = (node) => {
+      for (const k of node.kids) {
+        out.add(k);
+        const kid = byId(k);
+        if (kid) walk(kid);
+      }
+    };
+    walk(n);
+
+    for (const d of DEPS) {
+      if (d.from === id) out.add(d.to);
+      if (d.to === id) out.add(d.from);
+    }
+    for (const t of TAG_LINKS) {
+      if (t.from === id) out.add(t.to);
+      if (t.to === id) out.add(t.from);
+    }
+    return out;
+  }
+
+  /** 同里程碑的其它任务：不是直接关系，退一半 */
+  function kinOf(id) {
+    const out = new Set();
+    for (const m of MILESTONES) {
+      if (m.nodes.includes(id)) for (const x of m.nodes) if (x !== id) out.add(x);
+    }
+    return out;
+  }
+
+  function applyFocusClasses() {
+    const on = Boolean(state.spotlight && state.focus && byId(state.focus));
+    stage.classList.toggle('focusing', on);
+
+    const rel = on ? relatedOf(state.focus) : null;
+    const kin = on ? kinOf(state.focus) : null;
+
+    for (const [id, slot] of slots) {
+      const isRel = Boolean(on) && rel.has(id);
+      slot.classList.toggle('rel', isRel);
+      slot.classList.toggle('kin', Boolean(on) && !isRel && kin.has(id));
+      slot.classList.toggle('focus', Boolean(on) && id === state.focus);
+    }
+
+    for (const el of svgBack.querySelectorAll('path, circle')) {
+      if (!el.dataset.from) continue;
+      el.classList.toggle('rel', Boolean(on) && rel.has(el.dataset.from) && rel.has(el.dataset.to));
+    }
+    for (const el of svgFront.querySelectorAll('path')) {
+      if (!el.dataset.from) continue;
+      el.classList.toggle('rel', Boolean(on) && rel.has(el.dataset.from) && rel.has(el.dataset.to));
+    }
+
+    for (const m of MILESTONES) {
+      const el = msEls.get(m.id);
+      const isRel = Boolean(on) && m.nodes.includes(state.focus);
+      el.classList.toggle('rel', isRel);
+      el.style.borderColor = isRel ? 'color-mix(in srgb, var(--accent) 38%, transparent)' : '';
+    }
+
+    for (const d of labelDefs) {
+      lineLabels.get(d.id).classList.toggle('rel', Boolean(on) && rel.has(d.from) && rel.has(d.to));
+    }
+  }
+
+  /* ------------------------------------------------------------------
+     9) 任务详情抽屉
+     ------------------------------------------------------------------ */
+
+  function refItem(id) {
+    const n = byId(id);
+    const st = STATUS[n.status] ?? STATUS.todo;
+    return `<li><button data-goto="${id}">
+      <span class="txt">${esc(n.title)}</span>
+      <span class="st" style="--st:${st.color}">${st.label}</span>
+    </button></li>`;
+  }
+
+  function openDrawer(id) {
+    const n = byId(id);
+    if (!n) return;
+    // 再点一次同一张卡 = 关闭（不然抽屉开了就找不到关的地方）
+    if (state.drawer === id) { closeDrawer(); return; }
+
+    state.drawer = id;
+    drawerEl.classList.add('open');
+    drawerEl.setAttribute('aria-hidden', 'false');
+    for (const [sid, slot] of slots) slot.classList.toggle('selected', sid === id);
+
+    const st = STATUS[n.status] ?? STATUS.todo;
+    const prog = progressOf(n);
+    const kids = n.kids.map((k) => byId(k));
+    // 前置：谁挡着我；后续：我挡着谁
+    const blockers = DEPS.filter((d) => d.to === id).map((d) => byId(d.from));
+    const blocking = DEPS.filter((d) => d.from === id).map((d) => byId(d.to));
+
+    drawerHead.innerHTML = `
+      <div class="line1">
+        <span class="kind">${n.depth === 0 ? '主任务' : n.depth === 1 ? '子任务' : '孙任务'}</span>
+        <span class="status" style="--st:${st.color}">${st.label}</span>
+        <button class="close" data-close title="关闭（Esc）">×</button>
+      </div>
+      <h2>${esc(n.title)}</h2>
+    `;
+
+    drawerBody.innerHTML = `
+      ${n.ancestors.length ? `<section>
+        <h4>归属</h4>
+        <ul class="reflist">${n.ancestors.slice().reverse().map((a) => refItem(a)).join('')}</ul>
+      </section>` : ''}
+
+      ${n.desc ? `<section><h4>描述</h4><p>${esc(n.desc)}</p></section>` : ''}
+
+      <section>
+        <h4>时间</h4>
+        <div class="kv"><span class="k">创建</span><span>${n.created ?? '—'}</span></div>
+        <div class="kv"><span class="k">截止</span><span>${n.due ?? '未设置'}</span></div>
+        ${n.done ? `<div class="kv"><span class="k">完成</span><span>${n.done}</span></div>` : ''}
+      </section>
+
+      ${prog ? `<section>
+        <h4>子任务 ${prog.done}/${prog.total}</h4>
+        <div class="progress" style="margin-bottom:8px">
+          <span class="track"><i style="width:${prog.pct}%"></i></span>
+          <span class="ratio">${prog.pct}%</span>
+        </div>
+        ${kids.length ? `<ul class="reflist">${kids.map((k) => refItem(k.id)).join('')}</ul>` : ''}
+      </section>` : ''}
+
+      ${blockers.length ? `<section>
+        <h4>前置任务（挡着我）</h4>
+        <ul class="reflist">${blockers.map((b) => refItem(b.id)).join('')}</ul>
+      </section>` : ''}
+
+      ${blocking.length ? `<section>
+        <h4>后续任务（我挡着）</h4>
+        <ul class="reflist">${blocking.map((b) => refItem(b.id)).join('')}</ul>
+      </section>` : ''}
+
+      ${(n.tags ?? []).length ? `<section>
+        <h4>标签</h4>
+        <div class="chips">${n.tags.map((t) => `<span>#${esc(t)}</span>`).join('')}</div>
+      </section>` : ''}
+    `;
+
+    // 抽屉里点关联任务 → 就地跳过去，同时把画布上的聚焦也挪过去（关系可以顺着追）
+    drawerBody.querySelectorAll('[data-goto]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const target = btn.dataset.goto;
+        openDrawer(target);
+        state.focus = target;
+        state.spotlight = true;
+        applyFocusClasses();
+      });
+    });
+  }
+
+  function closeDrawer() {
+    state.drawer = null;
+    drawerEl.classList.remove('open');
+    drawerEl.setAttribute('aria-hidden', 'true');
+    for (const slot of slots.values()) slot.classList.remove('selected');
+  }
+
+  drawerEl.addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-close]')) closeDrawer();
+  });
+
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && state.drawer) closeDrawer();
+  });
+
+  /* ------------------------------------------------------------------
+     10) 过渡期间连续重画连线（让脐带跟着卡片飞）
+     ------------------------------------------------------------------ */
+
+  let animUntil = 0;
+  let rafId = 0;
+
+  function animateFor(ms) {
+    animUntil = performance.now() + ms;
+    for (const slot of slots.values()) if (slot.style.opacity !== '0') slot.classList.add('flying');
+    if (!rafId) rafId = requestAnimationFrame(tick);
+  }
+
+  function tick() {
+    drawLines();
+    if (performance.now() < animUntil) {
+      rafId = requestAnimationFrame(tick);
+    } else {
+      rafId = 0;
+      for (const slot of slots.values()) slot.classList.remove('flying');
+    }
+  }
+
+  /* ------------------------------------------------------------------
+     11) 控件 + URL hash
+     ------------------------------------------------------------------ */
+
+  const btnExpand = document.getElementById('btn-expand');
+  const btnCollapse = document.getElementById('btn-collapse');
+  const btnDemo = document.getElementById('btn-demo');
+  const btnTheme = document.getElementById('btn-theme');
+  const app = document.getElementById('app');
+
+  btnExpand.addEventListener('click', () => {
+    for (const n of nodes.values()) if (n.kids.length) state.expanded.add(n.id);
+    applyLayout();
+    animateFor(1200);
+  });
+
+  btnCollapse.addEventListener('click', () => {
+    state.expanded.clear();
+    applyLayout();
+    animateFor(900);
+  });
+
+  let demoId = 'A2b';
+  btnDemo.addEventListener('click', () => {
+    demoId = demoId === 'A2b' ? 'A' : 'A2b';
+    state.focus = demoId;
+    state.spotlight = true;
+    applyFocusClasses();
+    setTimeout(() => {
+      state.spotlight = false;
+      state.focus = null;
+      applyFocusClasses();
+    }, 3000);
+  });
+
+  btnTheme.addEventListener('click', () => {
+    const dark = app.classList.toggle('theme-dark');
+    app.classList.toggle('theme-light', !dark);
+    btnTheme.textContent = dark ? '切亮色' : '切暗色';
+  });
+
+  function readHash() {
+    const raw = location.hash.replace(/^#/, '');
+    if (!raw) return {};
+    return Object.fromEntries(
+      raw.split('&').filter(Boolean).map((kv) => {
+        const i = kv.indexOf('=');
+        return i < 0 ? [kv, '1'] : [kv.slice(0, i), decodeURIComponent(kv.slice(i + 1))];
+      }),
+    );
+  }
+
+  const hash = readHash();
+
+  if (hash.theme === 'light') {
+    app.classList.remove('theme-dark');
+    app.classList.add('theme-light');
+    btnTheme.textContent = '切暗色';
+  }
+  if (hash.expand !== undefined) {
+    state.expanded.clear();
+    for (const id of String(hash.expand).split(',').map((s) => s.trim()).filter(Boolean)) state.expanded.add(id);
+  }
+  if (hash.focus) {
+    state.focus = hash.focus;
+    state.spotlight = true;
+  }
+
+  buildStaticLines();
+  fit();
+  applyLayout();
+
+  // 手势模式：hash 优先，否则用默认值（顺带把按钮的选中态同步上）
+  document.querySelectorAll('[data-gesture]').forEach((b) => {
+    b.addEventListener('click', () => setGesture(b.dataset.gesture));
+  });
+  setGesture(hash.gesture === 'card' || hash.gesture === 'badge' ? hash.gesture : 'strip');
+
+  requestAnimationFrame(() => drawLines());
+  setTimeout(() => drawLines(), 200);
+  setTimeout(() => drawLines(), 700);
+  setTimeout(() => { drawLines(); animateFor(400); }, 1200);
+  if (hash.drawer) setTimeout(() => openDrawer(hash.drawer), 900);
+
+  window.addEventListener('resize', () => {
+    fit();
+    drawLines();
+  });
+
+  /* ------------------------------------------------------------------
+     12) 自检（#check=1）：排版与状态靠肉眼看截图不可靠，让页面自己算
+     ------------------------------------------------------------------ */
+
+  function sampleStyles() {
+    const out = {};
+    for (const id of ['A', 'A1', 'A2', 'A2b', 'A3', 'B']) {
+      const s = slots.get(id);
+      if (!s) continue;
+      const cs = getComputedStyle(s);
+      out[id] = `${cs.opacity}${cs.filter && cs.filter !== 'none' ? ' ' + cs.filter : ''}` +
+        `${s.classList.contains('rel') ? ' [rel]' : ''}${s.classList.contains('focus') ? ' [focus]' : ''}`;
+    }
+    return out;
+  }
+
+  function selfCheck() {
+    const b = stage.getBoundingClientRect();
+    const k = b.width / DESIGN.w || 1;
+
+    const rects = [];
+    for (const [id, slot] of slots) {
+      if (!visible(byId(id))) continue;
+      const a = slot.getBoundingClientRect();
+      rects.push({ id, x: (a.left - b.left) / k, y: (a.top - b.top) / k, w: a.width / k, h: a.height / k });
+    }
+
+    const overlaps = [];
+    for (let i = 0; i < rects.length; i += 1) {
+      for (let j = i + 1; j < rects.length; j += 1) {
+        const A = rects[i];
+        const B = rects[j];
+        const ox = Math.min(A.x + A.w, B.x + B.w) - Math.max(A.x, B.x);
+        const oy = Math.min(A.y + A.h, B.y + B.h) - Math.max(A.y, B.y);
+        if (ox > 2 && oy > 2) overlaps.push(`${A.id}x${B.id}:${Math.round(ox)}x${Math.round(oy)}`);
+      }
+    }
+
+    const outside = [];
+    for (const r of rects) {
+      const ms = MILESTONES.find((m) => m.nodes.includes(r.id));
+      if (!ms) { outside.push(`${r.id}:no-band`); continue; }
+      const out = [];
+      if (r.x < ms.x + 8) out.push('left');
+      if (r.y < ms.y + 8) out.push('top');
+      if (r.x + r.w > ms.x + ms.w - 8) out.push('right');
+      if (r.y + r.h > ms.y + ms.h - 8) out.push('bottom');
+      if (out.length) outside.push(`${r.id}:${ms.id}:${out.join(',')}`);
+    }
+
+    const degenerate = [];
+    for (const p of svgBack.querySelectorAll('path[data-from]')) {
+      if (!visible(byId(p.dataset.from)) || !visible(byId(p.dataset.to))) continue;
+      let len = 0;
+      try { len = p.getTotalLength(); } catch { len = -1; }
+      if (len < 3) degenerate.push(`${p.dataset.from}->${p.dataset.to}:${Math.round(len)}`);
+    }
+
+    // "样式简洁但内容不简洁"这条要能被验证：卡片上的信息行必须真的渲染出来了
+    const contentGaps = [];
+    const overflows = [];
+    for (const [id, slot] of slots) {
+      const card = slot.querySelector('.card');
+      const n = byId(id);
+      if (!card.querySelector('.title')?.textContent?.trim()) contentGaps.push(`${id}:no-title`);
+      if (!card.querySelector('.meta')?.textContent?.trim()) contentGaps.push(`${id}:no-meta`);
+      if (!card.querySelector('.status')?.textContent?.trim()) contentGaps.push(`${id}:no-status`);
+      if (n.kids.length && !card.querySelector('.progress')) contentGaps.push(`${id}:no-progress`);
+      // card 手势下整张卡就是展开入口，不该再要求一个单独的按钮
+      if (n.kids.length && state.gesture !== 'card' && !card.querySelector('[data-toggle]')) {
+        contentGaps.push(`${id}:no-expand-entry`);
+      }
+      // 固定高度的卡片最容易出的问题是内容被裁掉。
+      // 量 .card-body 而不是整张卡：.stack（背后那两片纸边）是绝对定位的装饰，会误报。
+      const bodyEl = card.querySelector('.card-body');
+      if (bodyEl && bodyEl.scrollHeight > bodyEl.clientHeight + 1) {
+        overflows.push(`${id}:${bodyEl.scrollHeight}>${bodyEl.clientHeight}`);
+      }
+    }
+
+    const report = {
+      scale: Number(k.toFixed(3)),
+      visibleCards: rects.length,
+      gesture: state.gesture,
+      overlaps,
+      outsideBand: outside,
+      degenerateLines: degenerate,
+      contentGaps,
+      overflows,
+      stageClass: stage.className,
+      drawer: {
+        open: drawerEl.classList.contains('open'),
+        id: state.drawer,
+        title: drawerHead.querySelector('h2')?.textContent ?? null,
+        sections: drawerBody.querySelectorAll('section').length,
+        selectedCard: [...slots.values()].filter((s) => s.classList.contains('selected')).map((s) => s.dataset.id),
+      },
+      sampled: sampleStyles(),
+    };
+
+    const pre = document.createElement('pre');
+    pre.id = 'selfcheck';
+    pre.textContent = 'SELFCHECK ' + JSON.stringify(report);
+    document.body.appendChild(pre);
+  }
+
+  if (hash.check) setTimeout(selfCheck, 2600);
+})();
+</script>
+</body>
+</html>

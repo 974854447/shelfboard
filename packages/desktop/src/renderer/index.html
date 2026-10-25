@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>项目管理系统</title>
+    <!--
+      CSP 说明：
+      - connect-src 必须放开 http://127.0.0.1:* —— 内嵌服务的端口是启动时
+        由系统动态分配的，写不成固定值。
+      - style-src 允许 'unsafe-inline' 是因为 Vue 的 <style scoped> 与
+        Naive UI 都会注入内联样式；script-src 保持严格的 'self'，
+        不允许任何内联脚本或远程代码。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*"
+    />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

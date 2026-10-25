@@ -1,0 +1,181 @@
+/**
+ * 基础样式与全局重置。
+ *
+ * 颜色不写死在这里，全部走 `--pm-*` CSS 变量 ——
+ * 变量的值由 `theme/tokens.ts` 的调色板在运行时注入（见 `theme/apply.ts`）。
+ * 这样亮/暗主题只需要改一处，而不会出现"改了按钮忘了边框"。
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--pm-bg);
+  color: var(--pm-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei',
+    system-ui, sans-serif;
+  font-size: var(--pm-font-size, 13px);
+  line-height: 1.6;
+  overflow: hidden;
+  /* 拖动窗口时不要选中文字；正文区会在需要的元素上单独开启 */
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+pre,
+kbd {
+  font-family: 'Cascadia Mono', 'JetBrains Mono', Consolas, 'Courier New', monospace;
+}
+
+/* 可选中的区域：日志、描述、路径等需要复制的地方 */
+input,
+textarea,
+pre,
+code,
+[data-selectable] {
+  user-select: text;
+}
+
+/* ------------------------------------------------------------------ */
+/* 焦点可见性                                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 只在键盘导航时显示焦点环。
+ * 用 `:focus-visible` 而不是 `:focus`：鼠标点击也画个环会显得很吵。
+ */
+:focus-visible {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ */
+/* 滚动条                                                              */
+/* ------------------------------------------------------------------ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--pm-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--pm-border-strong);
+  border-radius: 6px;
+  /* 用透明边框做内缩，滚动条看起来更细、不贴边 */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--pm-text-faint);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ------------------------------------------------------------------ */
+/* 动效                                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 尊重系统的"减少动态效果"设置。
+ * 这不是可选项：前庭功能敏感的用户会因动画不适。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* 页面切换过渡（配合 <Transition> 使用） */
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* 列表项逐个淡入（配合 transition-group） */
+.fade-enter-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.fade-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.fade-leave-active {
+  transition: opacity 0.12s ease;
+  position: absolute;
+}
+
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* 通用小工具                                                          */
+/* ------------------------------------------------------------------ */
+
+.muted {
+  color: var(--pm-text-muted);
+}
+
+.faint {
+  color: var(--pm-text-faint);
+}
+
+.mono {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+}
+
+.empty-hint {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 48px 20px;
+  color: var(--pm-text-muted);
+  text-align: center;
+}
+
+/* 拖拽时的落点占位（vue-draggable-plus 的 ghost 类） */
+.drag-ghost {
+  opacity: 0.35;
+  background: var(--pm-accent-soft) !important;
+  border-style: dashed !important;
+}

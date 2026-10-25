@@ -1,0 +1,26 @@
+packages:
+  - 'packages/*'
+
+# 依赖构建脚本白名单（pnpm 10+ 默认禁止依赖执行 postinstall 等脚本）。
+#
+# 键名必须用 `allowBuilds`（pnpm 11 的写法）。旧名 `onlyBuiltDependencies` 会被
+# pnpm 自动迁移，并插入值为 "set this to true or false" 的占位项。只要存在
+# 「待决定」的依赖，**每一次 pnpm 命令都会以 ERR_PNPM_IGNORED_BUILDS 退出码 1 失败**
+# —— 连 `pnpm test` 都会被一起带崩（它运行前会做依赖状态检查并内部跑 install）。
+# 因此这里必须给出明确值，不能留空。
+#
+# 各项理由：
+#   better-sqlite3 —— v13 已把原生二进制打进包内（prebuilds/win32-x64.node），
+#                     实测 require 与 SQL 读写均正常，不需要 install 脚本。
+#   esbuild        —— 平台二进制由其 optionalDependencies 提供，不需要 install 脚本。
+#   electron       —— postinstall 必须下载 Electron 运行时（约 100MB），无法跳过。
+#                     该脚本以「管道 stdio 派生子进程」执行，在受限沙箱下会 spawn EPERM，
+#                     因此安装 electron 时必须在放宽权限的情况下执行 pnpm install。
+#   electron-winstaller —— electron-builder 的传递依赖，只在构建 Windows 安装包时用。
+#                     当前不构建安装包，设为 false 以免每次 pnpm 命令都被
+#                     ERR_PNPM_IGNORED_BUILDS 卡住（它会把 pnpm test 一起带崩）。
+allowBuilds:
+  better-sqlite3: false
+  esbuild: false
+  electron: true
+  electron-winstaller: false

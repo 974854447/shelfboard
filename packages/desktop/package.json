@@ -1,0 +1,93 @@
+{
+  "name": "@pm-studio/desktop",
+  "version": "0.2.2",
+  "private": true,
+  "description": "Electron 桌面外壳：主进程、preload 与渲染进程",
+  "author": "项目管理系统",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "smoke": "electron scripts/smoke.cjs",
+    "e2e": "node scripts/e2e/run.cjs",
+    "e2e:packaged": "node scripts/e2e/run.cjs --packaged",
+    "pack:dir": "electron-vite build && electron-builder --win --dir",
+    "dist": "electron-vite build && electron-builder --win"
+  },
+  "dependencies": {
+    "@pm-studio/server": "workspace:*",
+    "@pm-studio/shared": "workspace:*",
+    "better-sqlite3": "^13.0.3",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.12.5",
+    "lunar-typescript": "1.8.6",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.9",
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3",
+    "electron-log": "^5.4.4",
+    "electron-vite": "^5.0.0",
+    "execa": "^10.0.1",
+    "naive-ui": "^2.45.3",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.43",
+    "vue-draggable-plus": "^0.6.1",
+    "vue-router": "^5.3.1"
+  },
+  "build": {
+    "appId": "com.pmstudio.desktop",
+    "productName": "项目管理系统",
+    "copyright": "Copyright © 2026 项目管理系统",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "../../release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**",
+      "package.json",
+      "!**/node_modules/@pm-studio/**",
+      "!**/node_modules/better-sqlite3/prebuilds/darwin-*",
+      "!**/node_modules/better-sqlite3/prebuilds/linux*",
+      "!**/node_modules/better-sqlite3/prebuilds/win32-arm64.node"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "项目管理系统",
+      "artifactName": "${productName}-${version}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    }
+  }
+}

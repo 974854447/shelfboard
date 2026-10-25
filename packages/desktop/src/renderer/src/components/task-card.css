@@ -1,0 +1,336 @@
+/**
+ * 任务卡的样式（**全局，不是 scoped**）。
+ *
+ * 为什么单独一个文件、而且是全局的：同一张卡片现在出现在四个地方 ——
+ * 工作台、我的待办、全局搜索、日历右侧的「选中某天」面板。
+ * 用户 2026-09-25 的要求是「任务卡片与工作台中的任务卡片一致，且功能也是一致」，
+ * 那就**只能有一份样式**：两份拷贝迟早会漂移（改了一处忘了另一处，
+ * 界面上是"看着差不多但总有点不对"），而这种漂移没人会主动去查。
+ *
+ * `scoped` 做不到这件事：scoped 样式只作用于自己那个组件的模板，
+ * 组件之间没法共用同一段 CSS。所以这里的类名（`.wb-*`）是**项目内的保留前缀**，
+ * 别的组件不要用。工作台自己的网格、面包屑、返回卡等仍然写在 WorkbenchView 的
+ * scoped 样式里（那些只有它用）。
+ *
+ * 一维排布一律用弹性盒子（技术设计 §33 的约定）。
+ */
+
+/* ---------------- 卡片本体 ---------------- */
+
+/**
+ * 卡片刻意做得平：没有阴影、没有渐变，只有一条 1px 边框。
+ * 一屏几十张卡，任何"每张都发光"的做法叠起来都会变成噪音。
+ *
+ * 右侧 52px 的内边距是**给悬停按钮预留的**：这样按钮滑出时不会盖住标题或状态标签，
+ * 也不会因为悬停而改变卡片尺寸（尺寸一变，网格就会重排，鼠标底下的卡片会跑）。
+ */
+.wb-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 88px;
+  padding: 9px 52px 9px 10px;
+  border: 1px solid var(--pm-border);
+  border-radius: 9px;
+  background: var(--pm-surface);
+  cursor: pointer;
+  /* 悬停按钮从卡片右缘滑入，靠它把按钮裁在卡片里 */
+  overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.wb-card:hover {
+  border-color: var(--pm-border-strong);
+  background: var(--pm-raised);
+}
+
+.wb-card:focus-visible {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 2px;
+}
+
+/*
+ * 没有子任务的卡片：点它**不进层**（用户要求："不存在子任务则不用点进去"）。
+ *
+ * 只改光标：鼠标移上去是普通箭头，而不是"能点进去"的手型 —— 手型在这里是骗人的。
+ * 悬停时的边框/底色反馈**保留**：它现在表达的是"你在看这张卡"，
+ * 因为「详情」图标正是靠悬停滑出来的，那张卡依然是可操作的对象。
+ * 卡片底部的"没有子任务"文案与它一起给出说明，不必再加图标。
+ */
+.wb-card.is-leaf {
+  cursor: default;
+}
+
+.wb-card.is-done .wb-title {
+  color: var(--pm-text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--pm-border-strong);
+}
+
+.wb-card-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.wb-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.wb-title {
+  flex: 1;
+  min-width: 0;
+  /* 两行封顶：宽度一致时行数不定会让同一行的卡片高度参差 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--pm-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.wb-blocked {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--pm-warn) 15%, transparent);
+  color: var(--pm-warn);
+  font-size: 10.5px;
+  line-height: 15px;
+  white-space: nowrap;
+}
+
+.wb-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  min-height: 15px;
+  color: var(--pm-text-faint);
+  font-size: 10.5px;
+}
+
+.wb-progress {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+}
+
+.wb-track {
+  display: block;
+  width: 34px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--pm-sunken);
+  overflow: hidden;
+}
+
+.wb-track > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--pm-ok);
+  transition: width 0.3s ease;
+}
+
+.wb-tag {
+  flex: none;
+  white-space: nowrap;
+}
+
+/*
+ * 卡片上的小标签（今日待办用它标出"这条为什么出现在今天"）。
+ *
+ * 与 `#标签` 的区别要一眼看得出来：`#标签` 是用户自己起的名字（纯文本），
+ * 这里是**系统给的判定结果**，所以做成有底色的小药丸。
+ * 三种轻重：逾期用警示红、今天到期/标记用暖色、其余保持安静 ——
+ * 都是"该先做"的提示，不该抢状态标签（卡片上唯一带底色的可点控件）的位置。
+ */
+.wb-badge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 15px;
+  white-space: nowrap;
+}
+
+.wb-badge.is-default {
+  color: var(--pm-text-muted);
+  background: color-mix(in srgb, var(--pm-text) 9%, transparent);
+}
+
+.wb-badge.is-warning {
+  color: var(--pm-warning, #b9821a);
+  background: color-mix(in srgb, var(--pm-warning, #e6a23c) 18%, transparent);
+}
+
+.wb-badge.is-danger {
+  color: var(--pm-danger, #c0392b);
+  background: color-mix(in srgb, var(--pm-danger, #d03050) 18%, transparent);
+}
+
+.wb-belong {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--pm-text-muted);
+}
+
+/* 工作台搜索结果里的额外一行提示（"点它进入所属的那一层"） */
+.wb-belong-hint {
+  color: var(--pm-accent);
+  white-space: nowrap;
+}
+
+.wb-card-bottom {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: auto;
+  min-width: 0;
+}
+
+/*
+ * 撑开中间的空档（卡片底部与工具栏都用它）。
+ * `min-width: 0` 是必须的：不加的话它在窄容器里按内容撑开，
+ * 会把右边的状态标签挤出卡片。
+ */
+.wb-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.wb-counts {
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+/* 状态标签：卡片上唯一带底色的元素 —— 它同时是"状态展示"和"状态开关" */
+.wb-status {
+  flex: none;
+  padding: 0 7px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.wb-status:hover {
+  filter: brightness(1.15);
+}
+
+/* ---------------- 「今天做」星标 ---------------- */
+
+/**
+ * 卡底的一个星形按钮（用户要求：「只需要一个图标按钮，且鼠标悬浮提示添加今日待办」）。
+ *
+ * 三态：默认是**暗的描边星**（不抢注意力）、悬停变亮、点亮后是**实心星 + 强调色**
+ * （一眼就能在列表里扫出"我标了今天做"的那几条）。
+ * 它没有文字，所以点击区靠 padding 撑到 ~25px（图标 15px 太小不好点）。
+ */
+.wb-today {
+  flex: none;
+  padding: 5px;
+  margin-right: 2px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--pm-text-faint);
+  line-height: 0;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.wb-today:hover {
+  color: var(--pm-text);
+  background: var(--pm-surface-hover, rgb(127 127 127 / 12%));
+}
+
+.wb-today.is-on {
+  color: var(--pm-warning, #e6a23c);
+}
+
+.wb-today:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* ---------------- 悬停滑出的「详情」按钮 ---------------- */
+
+/**
+ * 从卡片右缘往左滑出（`translateX(100%)` → `0`），同时淡入。
+ *
+ * 绝对定位：不占布局，所以鼠标移到卡片上时卡片不会长高/变窄 ——
+ * 这是"悬停控件"最常踩的坑（卡片一抖，鼠标就掉出去了）。
+ * 它是卡片上**唯一**的悬停控件；删除走详情抽屉与 Delete 键。
+ */
+.wb-detail-btn {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  /* 点击区域靠 padding：图标本身 17px，太小不好点；padding 透明，不构成"按钮样式" */
+  padding: 5px;
+  border: none;
+  background: none;
+  color: var(--pm-text-faint);
+  line-height: 0;
+  cursor: pointer;
+  opacity: 0;
+  transform: translate(100%, -50%);
+  transition:
+    transform 0.18s ease-out,
+    opacity 0.18s ease-out,
+    color 0.15s ease;
+}
+
+.wb-card:hover .wb-detail-btn,
+.wb-detail-btn:focus-visible {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+.wb-detail-btn:hover {
+  color: var(--pm-accent);
+}
+
+/*
+ * 减少动态效果：所有过渡直接到位（跟随系统"减少动态效果"设置的用户
+ * 不该看到卡片上的滑入/淡入）。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .wb-card,
+  .wb-status,
+  .wb-detail-btn,
+  .wb-track > i {
+    transition: none;
+  }
+
+  .wb-detail-btn {
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+}

@@ -1,0 +1,2409 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>总览 · 六边形关系数据图</title>
+<!--
+  总览页原型（design mock，不参与构建）。
+
+  这一版按用户的最新结构做：
+  1. 只有两个页面 —— **总览** 和 **任务**（原「看板」改名，增删改查主战场）。
+  2. 「容器卡 + 子任务环绕」不再单独成页，而是**融进总览，作为一个数据图**。
+  3. 数据图里的卡片做成**六边形**（蜂窝）—— 蜂窝能无缝铺满，任务再多也不会互相压。
+  4. 卡片极简：只放标题与状态，不放详情；要看细节走「任务」页。
+
+  六边形的两层用法：
+  - 默认：整个项目的**蜂窝地图**，一格 = 一个主任务，颜色 = 状态，格子里带完成度细条。
+  - 下钻：点一格 → 展开成**六边形簇**（中心 = 主任务，周围 6 格 = 子任务，外圈 = 孙任务），
+    这就是原来那个「容器卡 + 环绕」，只是换成六边形。
+
+  3D 的实现方式（不用 3D 引擎）：
+  - 整个蜂窝放在一个**倾斜的盘面**上（perspective + rotateX）；
+  - 盘面里的六边形与连线跟着倾斜（真正的 3D 观感）；
+  - 下钻出来的六边形卡片**反向旋转回来保持正立**，所以文字永远正着、永远可读。
+-->
+<style>
+  /* ---------- 设计令牌（与 theme/tokens.ts 对齐） ---------- */
+  .theme-dark {
+    --bg: #16161a;
+    --surface: #1d1d22;
+    --raised: #242429;
+    --sunken: #2b2b31;
+    --border: #2e2e36;
+    --border-strong: #3d3d47;
+    --text: #e6e6ea;
+    --text-muted: #9a9aa5;
+    --text-faint: #6e6e78;
+    --accent: #4c9aff;
+    --accent-soft: rgba(76, 154, 255, 0.14);
+    --danger: #f0756f;
+    --warn: #e8b96a;
+    --ok: #3fbf7f;
+    --todo: #45454f;
+    --shadow: 0 6px 18px rgba(0, 0, 0, 0.26);
+    --grid-line: rgba(120, 160, 255, 0.05);
+  }
+
+  .theme-light {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --raised: #ffffff;
+    --sunken: #eef0f4;
+    --border: #e3e6ec;
+    --border-strong: #cfd4dd;
+    --text: #1f2329;
+    --text-muted: #646c7a;
+    --text-faint: #9aa1ad;
+    --accent: #2b6cd4;
+    --accent-soft: rgba(43, 108, 212, 0.10);
+    --danger: #d94b41;
+    --warn: #b5772a;
+    --ok: #1f9254;
+    --todo: #d7dbe3;
+    --shadow: 0 6px 16px rgba(16, 24, 40, 0.10);
+    --grid-line: rgba(43, 108, 212, 0.07);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 13px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  /* ---------- 顶栏 ---------- */
+  .top {
+    flex: none; height: 50px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .top .brand { font-weight: 600; }
+  .top .sep { width: 1px; height: 18px; background: var(--border); }
+  .top .hint { color: var(--text-faint); font-size: 12px; }
+  .top .spacer { flex: 1; }
+  .top .mock-badge {
+    font-size: 11px; color: var(--text-faint);
+    border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px;
+  }
+
+  main { flex: 1; min-height: 0; display: flex; }
+
+  /* ---------- 侧栏 ---------- */
+  .side {
+    flex: none; width: 188px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    padding: 12px 10px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .side .nav {
+    display: flex; align-items: center; gap: 9px;
+    font: inherit; font-size: 13px; text-align: left;
+    color: var(--text-muted);
+    background: transparent; border: none; border-radius: 8px;
+    padding: 8px 10px; cursor: pointer;
+    transition: background 0.16s ease, color 0.16s ease;
+  }
+  .side .nav:hover { background: var(--sunken); color: var(--text); }
+  .side .nav.on { background: var(--accent-soft); color: var(--accent); }
+  .side .nav .ic { width: 14px; text-align: center; opacity: 0.9; }
+  .side .foot {
+    margin-top: auto; padding: 10px 10px 2px;
+    border-top: 1px solid var(--border);
+    color: var(--text-faint); font-size: 11px; line-height: 1.7;
+  }
+
+  /* ---------- 页面 ---------- */
+  .page { flex: 1; min-width: 0; display: none; flex-direction: column; gap: 12px; padding: 14px 16px 16px; overflow: hidden; }
+  .page.on { display: flex; }
+
+  /* ---------- 统计卡 ---------- */
+  .stats { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stat {
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); padding: 11px 13px 12px;
+  }
+  .stat .lb { color: var(--text-faint); font-size: 11.5px; display: flex; align-items: center; gap: 6px; }
+  .stat .nm { font-size: 25px; font-weight: 600; line-height: 1.25; margin-top: 3px; letter-spacing: -0.4px; }
+  .stat .nm small { font-size: 12px; font-weight: 500; color: var(--text-faint); margin-left: 5px; letter-spacing: 0; }
+  .stat .bar { height: 3px; border-radius: 2px; background: var(--sunken); margin-top: 9px; overflow: hidden; }
+  .stat .bar > i { display: block; height: 100%; border-radius: 2px; background: color-mix(in srgb, var(--accent) 62%, transparent); }
+  .stat .bar.ok > i { background: color-mix(in srgb, var(--ok) 66%, transparent); }
+
+  /* ---------- 主体两栏 ---------- */
+  .grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(0, 1fr); gap: 12px; }
+
+  .panel {
+    min-width: 0; min-height: 0;
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .panel > header {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    padding: 10px 13px; border-bottom: 1px solid var(--border);
+  }
+  .panel > header h2 { font-size: 12.5px; font-weight: 600; margin: 0; }
+  .panel > header .sub { color: var(--text-faint); font-size: 11px; }
+  .panel > header .spacer { flex: 1; }
+  .panel > header button {
+    font: inherit; font-size: 11px; color: var(--text-muted);
+    background: transparent; border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 8px; cursor: pointer;
+    transition: border-color 0.16s ease, color 0.16s ease;
+  }
+  .panel > header button:hover { border-color: var(--border-strong); color: var(--text); }
+  .panel > header button.on { border-color: var(--accent); color: var(--accent); }
+  .panel > header button[hidden] { display: none; }
+
+  /* ---------- 3D 盘面 ---------- */
+  .chart { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+  .chart .stage3d {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    perspective: 1600px;
+    cursor: grab;
+  }
+  .chart .stage3d.dragging { cursor: grabbing; }
+  .chart .zoom { transform-style: preserve-3d; transform: scale(var(--zoom, 1)); }
+  .chart .disk {
+    position: relative; width: 0; height: 0;
+    transform-style: preserve-3d;
+    transform: rotateX(var(--tilt, 40deg)) rotateZ(var(--spin, 0deg));
+  }
+  .chart svg.map { position: absolute; left: -390px; top: -390px; width: 780px; height: 780px; overflow: visible; }
+  .chart .hintline {
+    position: absolute; left: 13px; bottom: 10px;
+    font-size: 11px; color: var(--text-faint); pointer-events: none;
+  }
+
+  /* 蜂巢格 */
+  .hx-top { transition: opacity 0.2s ease, filter 0.2s ease; }
+  .hx-under { fill: rgba(0, 0, 0, 0.45); }
+  .hx-label {
+    font-size: 10.5px; font-weight: 600;
+    text-anchor: middle; dominant-baseline: middle;
+    pointer-events: none;
+  }
+  .hx-gauge { stroke: rgba(0, 0, 0, 0.35); stroke-width: 3; fill: none; }
+  .hx-gauge-fill { stroke-width: 3; fill: none; stroke-linecap: round; }
+  .hx-ring { fill: none; stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 6; opacity: 0.5; }
+  .hx-ring-label { font-size: 9.5px; fill: var(--text-faint); text-anchor: middle; }
+  .dep-arc { fill: none; stroke: var(--warn); stroke-width: 1.6; stroke-dasharray: 4 6; opacity: 0; }
+  .dep-arc.on { opacity: 0.95; }
+  .dep-head { fill: var(--warn); opacity: 0; }
+  .dep-head.on { opacity: 0.95; }
+
+  /* 下钻出来的六边形卡片（DOM，反向旋转保持正立）
+     注意 preserve-3d 必须层层传下去：中间任何一层丢了它，子元素的反向旋转就会
+     在"已经被投影过的平面"里再做一次，纵向被压两次（cos·cos），卡片会又扁又小 */
+  .hexes { position: absolute; left: 0; top: 0; transform-style: preserve-3d; }
+  .hexc {
+    position: absolute;
+    transform-style: preserve-3d;
+    transform: rotateZ(calc(-1 * var(--spin, 0deg))) rotateX(calc(-1 * var(--tilt, 40deg)));
+    transition: opacity 0.3s ease;
+  }
+  .hexc > * { position: absolute; inset: 0; clip-path: polygon(0 50%, 25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%); }
+  .hexc .under { inset: 0; background: rgba(0, 0, 0, 0.5); transform: translate(1px, 3px); }
+  .hexc .brd { background: var(--border-strong); }
+  .hexc .fill { inset: 1.5px; background: var(--surface); }
+  .hexc .txt {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 19%;
+    text-align: center;
+    clip-path: none;
+  }
+  /* 标题两行封顶：六边形里放不下长标题，全文在悬停浮卡和「任务」页里 */
+  .hexc .txt .tl {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+    font-size: 11px; font-weight: 600; line-height: 1.22;
+  }
+  .hexc.root .txt .tl { font-size: 13px; }
+  .hexc.g2 .txt { padding: 0 15%; }
+  .hexc.g2 .txt .tl { font-size: 10px; font-weight: 500; color: var(--text-muted); }
+  .hexc .tagline {
+    position: absolute; left: 0; right: 0; bottom: 18%;
+    text-align: center; font-size: 9.5px; color: var(--text-faint);
+    clip-path: none;
+  }
+  .hexc.hot .fill { inset: 2.5px; }
+  .hexc.hot { filter: brightness(1.12); }
+  .hexc.dim { opacity: 0.3; }
+  .hexc.rel { filter: none; }
+
+  /* chart 手势下的"飞行入场" */
+  .hexc.fly { animation: hex-in 0.42s cubic-bezier(0.22, 1.24, 0.36, 1) both; }
+  @keyframes hex-in {
+    from { opacity: 0; margin-top: 60px; }
+    to { opacity: 1; }
+  }
+
+  /* 悬停浮卡（正立，不受盘面倾斜影响） */
+  .tipcard {
+    position: absolute; z-index: 20;
+    min-width: 210px; max-width: 300px;
+    border: 1px solid var(--border-strong); border-radius: 9px;
+    background: var(--raised);
+    box-shadow: var(--shadow);
+    padding: 9px 11px;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.14s ease, transform 0.14s ease;
+  }
+  .tipcard.on { opacity: 1; transform: none; }
+  .tipcard .t1 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .tipcard .nm { font-size: 12.5px; font-weight: 600; }
+  .tipcard .st {
+    font-size: 10.5px; line-height: 16px; padding: 0 6px; border-radius: 4px;
+    color: var(--st, var(--text-muted));
+    background: color-mix(in srgb, var(--st, var(--text-muted)) 14%, transparent);
+  }
+  .tipcard .kv { font-size: 11px; color: var(--text-muted); display: flex; gap: 5px; }
+  .tipcard .kv .k { color: var(--text-faint); }
+  .tipcard .go { font-size: 10.5px; color: var(--text-faint); margin-top: 5px; }
+
+  /* ---------- 右侧小面板 ---------- */
+  .sidecol { min-width: 0; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  .card {
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+    padding: 12px 13px 13px;
+  }
+  .card h3 { margin: 0 0 10px; font-size: 12.5px; font-weight: 600; }
+
+  .stackbar { display: flex; height: 8px; border-radius: 5px; overflow: hidden; background: var(--sunken); }
+  .stackbar > i { display: block; height: 100%; transition: width 0.5s cubic-bezier(0.22, 1.2, 0.36, 1); }
+  .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; margin-top: 10px; }
+  .legend .it { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); }
+  .legend .it i { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+  .legend .it .n { margin-left: auto; color: var(--text-faint); }
+
+  .kvrow { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-muted); }
+  .kvrow + .kvrow { margin-top: 8px; }
+  .kvrow .lb { width: 58px; flex: none; }
+  .kvrow .track { flex: 1; height: 3px; border-radius: 2px; background: var(--sunken); overflow: hidden; }
+  .kvrow .track > i { display: block; height: 100%; border-radius: 2px; }
+  .kvrow .n { color: var(--text-faint); white-space: nowrap; }
+
+  .mslist { display: flex; flex-direction: column; gap: 9px; }
+  .mslist .ms { font-size: 11.5px; }
+  .mslist .ms .l1 { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; color: var(--text-muted); }
+  .mslist .ms .l1 .n { margin-left: auto; color: var(--text-faint); }
+  .mslist .ms .track { height: 3px; border-radius: 2px; background: var(--sunken); overflow: hidden; }
+  .mslist .ms .track > i { display: block; height: 100%; border-radius: 2px; background: color-mix(in srgb, var(--accent) 58%, transparent); }
+
+  .risk { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+  .risk li { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-muted); }
+  .risk li .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .risk li .n {
+    margin-left: auto; white-space: nowrap; font-size: 10.5px; color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 13%, transparent);
+    border-radius: 4px; padding: 0 5px;
+  }
+  .empty { color: var(--text-faint); font-size: 11.5px; }
+
+  /* ---------- 「任务台」页：分列看板 + 卡内子树 + 按需关系层 ---------- */
+  .board { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+
+  .bar { flex: none; display: flex; align-items: center; gap: 8px; }
+  .bar .search {
+    display: flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); border-radius: 7px; background: var(--surface);
+    padding: 4px 9px; width: 230px;
+  }
+  .bar .search input {
+    font: inherit; font-size: 12px; width: 100%;
+    color: var(--text); background: transparent; border: none; outline: none;
+  }
+  .bar .search .ic { color: var(--text-faint); font-size: 12px; }
+  .bar button {
+    font: inherit; font-size: 12px; color: var(--text-muted);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
+    padding: 5px 10px; cursor: pointer;
+    transition: border-color 0.16s ease, color 0.16s ease;
+  }
+  .bar button:hover { border-color: var(--border-strong); color: var(--text); }
+  .bar button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .bar button.primary { border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--accent); }
+  .bar .spacer { flex: 1; }
+  .bar .scale { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+  .bar .scale b { color: var(--text-muted); font-weight: 600; }
+
+  .cols { flex: 1; min-height: 0; position: relative; display: flex; gap: 10px; }
+
+  .col {
+    flex: 1; min-width: 0; display: flex; flex-direction: column;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); overflow: hidden;
+  }
+  .col-head {
+    flex: none; display: flex; align-items: center; gap: 7px;
+    padding: 9px 11px; border-bottom: 1px solid var(--border);
+    font-size: 12px; color: var(--text-muted);
+  }
+  .col-head .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .col-head .n { color: var(--text-faint); }
+  .col-head .spacer { flex: 1; }
+  /* 关系目标滚出视口时，在列头指示方向与数量 —— 这是"按需关系层"能扛量的关键 */
+  .col-head .edge {
+    font-size: 10px; color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 13%, transparent);
+    border-radius: 4px; padding: 0 5px; white-space: nowrap;
+  }
+  .col-head .edge[hidden] { display: none; }
+
+  .col-scroll { flex: 1; min-height: 0; position: relative; overflow-y: auto; overflow-x: hidden; }
+  .col-scroll::-webkit-scrollbar { width: 8px; }
+  .col-scroll::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+  .col-spacer { width: 1px; }
+
+  .row { position: absolute; left: 0; right: 0; padding: 0 8px 4px 8px; }
+  .row.ghost { padding-top: 1px; }
+
+  /* 缩进 + 左侧引导线：子任务挂在主任务下方，一眼看出属于谁 */
+  .rc { margin-left: calc(var(--ind, 0) * 15px); }
+  .rc.deep::before {
+    content: ""; position: absolute; left: -9px; top: -2px; bottom: 2px;
+    width: 1px; background: var(--border);
+  }
+
+  .rc {
+    position: relative;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--raised);
+    padding: 7px 9px 7px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, opacity 0.2s ease, filter 0.2s ease;
+  }
+  .rc:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
+  .rc.parent { background: var(--surface); }
+
+  .rc .r1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .rc .sd { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .rc .tt {
+    font-size: 12.5px; font-weight: 600; line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
+  }
+  .rc .deps { display: flex; align-items: center; gap: 4px; flex: none; }
+  .rc .bdg {
+    font-size: 9.5px; line-height: 14px; padding: 0 4px; border-radius: 4px; white-space: nowrap;
+  }
+  .rc .bdg.blk { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+  .rc .bdg.dn { color: var(--text-faint); background: var(--sunken); }
+
+  .rc .r2 { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 10.5px; color: var(--text-faint); }
+  .rc .r2 .track { width: 46px; height: 3px; border-radius: 2px; background: var(--sunken); overflow: hidden; flex: none; }
+  .rc .r2 .track > i { display: block; height: 100%; background: color-mix(in srgb, var(--ok) 66%, transparent); }
+  .rc .r2 .tag { color: color-mix(in srgb, var(--ok) 74%, var(--text-muted)); }
+  .rc .r2 .ms { color: var(--text-faint); }
+
+  /* 展开横条：整卡宽的"容器开口"，展开入口够大就不会点错 */
+  .rc .strip {
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+    height: 18px; margin: 6px -9px -7px; padding-right: 26px;
+    border-top: 1px solid var(--border); border-radius: 0 0 7px 7px;
+    font-size: 10px; color: var(--text-faint);
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .rc .strip:hover { background: var(--sunken); color: var(--text); }
+  .rc .strip .chev { display: inline-block; font-size: 8px; transition: transform 0.22s cubic-bezier(0.22, 1.2, 0.36, 1); }
+  .rc.open .strip .chev { transform: rotate(180deg); }
+
+  .rc .acts { position: absolute; right: 7px; bottom: 5px; display: flex; gap: 5px; }
+  .rc .acts > * { opacity: 0; transition: opacity 0.15s ease; }
+  .rc:hover .acts > * { opacity: 1; }
+  .rc .acts button {
+    padding: 0; border: none; background: none; color: var(--text-faint);
+    line-height: 0; cursor: pointer;
+  }
+  .rc .acts button:hover { color: var(--danger); }
+  .rc .st {
+    font-size: 10px; line-height: 15px; padding: 0 5px; border-radius: 4px; cursor: pointer;
+    color: var(--st, var(--text-muted)); background: color-mix(in srgb, var(--st, var(--text-muted)) 13%, transparent);
+    border: none; font-family: inherit; white-space: nowrap;
+  }
+
+  /* 幽灵行：子任务在别的列 —— 一行字，指过去 */
+  .ghost-row {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10.5px; color: var(--text-faint);
+    border: 1px dashed var(--border); border-radius: 6px;
+    padding: 2px 8px; cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+  .ghost-row:hover { border-color: var(--border-strong); color: var(--text-muted); }
+
+  /* 关系聚焦：两级退让。
+     列表里鼠标一直在动，所以**悬停只做轻预览**（不然整屏一直闪）；
+     真正"强聚焦"留给打开详情抽屉的时候 —— 那时你确实在盯一个任务看关系。 */
+  .cols.focusing .rc { opacity: 0.56; filter: blur(0.4px) saturate(0.75); }
+  .cols.focusing .rc.kin { opacity: 0.78; filter: none; }
+  .cols.focusing .rc.rel { opacity: 1; filter: none; }
+  .cols.focusing .rc.focus { border-color: var(--accent); box-shadow: var(--shadow); }
+  .cols.strict .rc { opacity: 0.22; filter: blur(0.9px) saturate(0.5); }
+  .cols.strict .rc.kin { opacity: 0.5; filter: blur(0.4px) saturate(0.8); }
+  .cols.strict .rc.rel { opacity: 1; filter: none; }
+  .cols.focusing .row.ghost { opacity: 0.35; }
+
+  .rel-layer { position: absolute; inset: 0; z-index: 6; pointer-events: none; overflow: visible; }
+  .rel-parent { fill: none; stroke: var(--accent); stroke-width: 1.3; opacity: 0.85; }
+  .rel-dep { fill: none; stroke: var(--warn); stroke-width: 1.5; stroke-dasharray: 5 5; opacity: 0.9; }
+  .rel-tag { fill: none; stroke: var(--ok); stroke-width: 1.1; stroke-dasharray: 1.5 6; opacity: 0.7; }
+
+  /* 行内闪一下（新建、跳转过来时） */
+  @keyframes row-flash {
+    0% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+    100% { box-shadow: 0 0 0 2px transparent; }
+  }
+  .rc.flash { animation: row-flash 1s ease-out 2; }
+  @keyframes row-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: none; }
+  }
+  .rc.in { animation: row-in 0.3s cubic-bezier(0.22, 1.2, 0.36, 1) both; }
+  .rc.deleting { animation: row-in 0.22s reverse both; }
+
+  /* ---------- 详情抽屉（非模态：不挡画布） ---------- */
+  .drawer {
+    position: fixed; inset: 0; z-index: 40; pointer-events: none;
+  }
+  .drawer-panel {
+    position: absolute; top: 0; right: 0; bottom: 0; width: 372px;
+    display: flex; flex-direction: column;
+    background: var(--surface); border-left: 1px solid var(--border);
+    box-shadow: -16px 0 40px rgba(0, 0, 0, 0.28);
+    transform: translateX(100%);
+    transition: transform 0.26s cubic-bezier(0.22, 0.95, 0.28, 1);
+  }
+  .drawer.open { pointer-events: auto; }
+  .drawer.open .drawer-panel { transform: none; }
+  .drawer-head { flex: none; padding: 13px 16px 10px; border-bottom: 1px solid var(--border); }
+  .drawer-head .l1 { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+  .drawer-head .l1 .close {
+    margin-left: auto; font: inherit; font-size: 15px; line-height: 1; width: 26px; height: 26px;
+    color: var(--text-muted); background: transparent; border: 1px solid var(--border);
+    border-radius: 6px; cursor: pointer;
+  }
+  .drawer-head .l1 .close:hover { color: var(--text); border-color: var(--border-strong); }
+  .drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px 20px; }
+  .fld { margin-bottom: 13px; }
+  .fld label { display: block; font-size: 11px; color: var(--text-faint); margin-bottom: 5px; }
+  .fld input, .fld select, .fld textarea {
+    font: inherit; font-size: 12.5px; width: 100%;
+    color: var(--text); background: var(--raised);
+    border: 1px solid var(--border); border-radius: 7px;
+    padding: 6px 8px; outline: none;
+  }
+  .fld input:focus, .fld select:focus, .fld textarea:focus { border-color: var(--accent); }
+  .fld textarea { resize: vertical; min-height: 62px; line-height: 1.6; }
+  .fld .hint { font-size: 10.5px; color: var(--text-faint); margin-top: 5px; }
+  .deps-list { display: flex; flex-wrap: wrap; gap: 5px; }
+  .dep-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; color: var(--text-muted);
+    border: 1px solid var(--border); border-radius: 6px; padding: 2px 7px;
+    cursor: pointer;
+  }
+  .dep-chip:hover { border-color: var(--border-strong); color: var(--text); }
+  .dep-chip .x { color: var(--text-faint); }
+  .dep-chip .x:hover { color: var(--danger); }
+  .drawer-foot {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px; border-top: 1px solid var(--border);
+  }
+  .drawer-foot .saved { font-size: 11px; color: var(--text-faint); margin-left: auto; }
+  .drawer-foot button {
+    font: inherit; font-size: 12px; border-radius: 7px; padding: 5px 11px; cursor: pointer;
+    color: var(--text); background: var(--raised); border: 1px solid var(--border);
+  }
+  .drawer-foot button:hover { border-color: var(--border-strong); }
+  .drawer-foot button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+
+  /* ---------- 模态对话框（新建 / 确认删除） ---------- */
+  .modal {
+    position: fixed; inset: 0; z-index: 60;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.42);
+  }
+  .modal.on { display: flex; }
+  .modal .box {
+    width: 460px; max-width: calc(100vw - 40px);
+    border: 1px solid var(--border-strong); border-radius: 12px;
+    background: var(--surface); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    animation: row-in 0.22s cubic-bezier(0.22, 1.2, 0.36, 1) both;
+  }
+  .modal .box > h3 { margin: 0; padding: 14px 18px 0; font-size: 14px; }
+  .modal .box > .cnt { padding: 12px 18px 0; }
+  .modal .box .steps { font-size: 11.5px; color: var(--text-faint); padding: 6px 18px 0; line-height: 1.7; }
+  .modal .box > .foot {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 14px 18px 16px;
+  }
+  .modal .box .foot button {
+    font: inherit; font-size: 12.5px; border-radius: 7px; padding: 6px 14px; cursor: pointer;
+    color: var(--text); background: var(--raised); border: 1px solid var(--border);
+  }
+  .modal .box .foot button:hover { border-color: var(--border-strong); }
+  .modal .box .foot button.primary {
+    color: #fff; background: var(--accent); border-color: var(--accent);
+  }
+  .modal .box .foot button.primary:disabled { opacity: 0.45; cursor: not-allowed; }
+  .modal .box .foot button.danger { color: #fff; background: var(--danger); border-color: var(--danger); }
+  .modal .err { padding: 0 18px; color: var(--warn); font-size: 11.5px; min-height: 16px; }
+
+  /* 底部一行提示（保存/删除反馈） */
+  .toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 8px);
+    z-index: 70; pointer-events: none;
+    background: var(--raised); color: var(--text);
+    border: 1px solid var(--border-strong); border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 7px 14px; font-size: 12px;
+    opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---------- 「任务台」页占位（已实现，这里只留给旧文案兜底） ---------- */
+  .todo-page { flex: 1; display: flex; align-items: center; justify-content: center; }
+  .todo-page .box {
+    max-width: 620px; text-align: center;
+    border: 1px dashed var(--border-strong); border-radius: 12px;
+    padding: 28px 26px; color: var(--text-muted); line-height: 1.85; font-size: 12.5px;
+  }
+  .todo-page .box b { color: var(--text); }
+</style>
+</head>
+<body>
+<div id="app" class="theme-dark">
+
+  <header class="top">
+    <span class="brand">项目管理系统</span>
+    <span class="sep"></span>
+    <span class="hint">项目：pm-studio</span>
+    <span class="spacer"></span>
+    <span class="mock-badge">静态原型 · 非产品代码</span>
+  </header>
+
+  <main>
+    <nav class="side">
+      <button class="nav on" data-page="overview"><span class="ic">◍</span>总览</button>
+      <button class="nav" data-page="tasks"><span class="ic">▤</span>任务台</button>
+      <div class="foot" id="sideFoot">— 个任务<br>— 个主任务</div>
+    </nav>
+
+    <!-- ================= 总览 ================= -->
+    <section class="page on" id="page-overview">
+      <div class="stats" id="stats"></div>
+
+      <div class="grid">
+        <div class="panel">
+          <header>
+            <h2 id="chartTitle">关系数据图</h2>
+            <span class="sub" id="chartSub">一格 = 一个主任务</span>
+            <span class="spacer"></span>
+            <button id="btnBack" hidden>← 返回项目</button>
+            <button id="btnSpin">自动旋转</button>
+            <button id="btnTilt">切换视角</button>
+          </header>
+
+          <div class="chart" id="chart">
+            <div class="stage3d" id="stage3d">
+              <div class="zoom" id="zoom">
+                <div class="disk" id="disk">
+                  <svg class="map" id="map" viewBox="-390 -390 780 780"></svg>
+                  <div class="hexes" id="hexes"></div>
+                </div>
+              </div>
+            </div>
+            <div class="hintline" id="hintline">悬停看细节 · 点任意主任务下钻成它的子任务环</div>
+            <div class="tipcard" id="tip"></div>
+          </div>
+        </div>
+
+        <div class="sidecol" id="sidecol"></div>
+      </div>
+    </section>
+
+    <!-- ================= 任务台（增删改查主战场） ================= -->
+    <section class="page" id="page-tasks">
+      <div class="board">
+        <div class="bar">
+          <div class="search"><span class="ic">⌕</span><input id="q" placeholder="搜索任务标题…" /></div>
+          <button id="btnOnlyMain">只看主任务</button>
+          <button id="btnExpandAll">全部展开</button>
+          <button id="btnCollapseAll">全部折叠</button>
+          <span class="spacer"></span>
+          <span class="scale" id="scaleInfo">—</span>
+          <button id="btnNew" class="primary">＋ 新建任务</button>
+        </div>
+        <div class="cols" id="cols">
+          <svg class="rel-layer" id="relLayer"></svg>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 抽屉 / 对话框 / 提示都放在 #app 里面：
+       主题令牌挂在 #app 上，放到外面的话 var(--surface) 这些全部落空，
+       面板会变成透明 + 黑字（浮层最容易踩的坑） -->
+  <div class="drawer" id="drawer" aria-hidden="true">
+    <aside class="drawer-panel" role="dialog" aria-label="任务详情">
+      <div class="drawer-head" id="dHead"></div>
+      <div class="drawer-body" id="dBody"></div>
+      <div class="drawer-foot" id="dFoot"></div>
+    </aside>
+  </div>
+
+  <div class="modal" id="modal"><div class="box" id="modalBox"></div></div>
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ==================================================================
+     1) 数据：造一个约 400 个任务的项目（确定性，刷新不变）
+     ================================================================== */
+
+  let seed = 20260424;
+  const rnd = () => {
+    // xorshift，够用且确定
+    seed ^= seed << 13; seed >>>= 0;
+    seed ^= seed >> 17;
+    seed ^= seed << 5; seed >>>= 0;
+    return seed / 4294967296;
+  };
+  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+  const int = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+
+  const VERBS = ['重构', '设计', '实现', '拆分', '接入', '校准', '清理', '补测', '梳理', '迁移', '优化', '联调', '补齐', '收敛'];
+  const NOUNS = ['看板关系层', '卡片样式', '依赖连线', '里程碑分组', '虚拟滚动', '详情抽屉', '快捷键', '搜索过滤', '导入导出', '错误日志', '主题令牌', '工作区布局', '任务表单', '子任务展开', '拖拽排序', '六边形数据图', '总览统计', '备份还原'];
+  const TAILS = ['', '的边界情况', '的首版', '的性能', '的交互细节', '的空态', '与验证', '的回退', '的一致性'];
+  const TAGS = ['看板', '交互', '动画', '详情', '性能', '视觉', '数据'];
+
+  const STATUSES = ['todo', 'doing', 'blocked', 'done'];
+  const MILESTONES = [
+    { id: 'M1', name: 'M1 工作区与日志', closed: true },
+    { id: 'M2', name: 'M2 看板重构' },
+    { id: 'M3', name: 'M3 立体与动画' },
+    { id: 'M4', name: 'M4 详情与编辑' },
+  ];
+
+  const tasks = [];
+  const byId = new Map();
+
+  function addTask(o) {
+    const t = Object.assign({
+      children: [], ancestors: [], tags: [], deps: [], blockedBy: [],
+      status: 'todo', depth: 0,
+    }, o);
+    tasks.push(t);
+    byId.set(t.id, t);
+    return t;
+  }
+
+  /** 状态分布：完成得稍多一些，看起来像个在推进的项目 */
+  function rollStatus(depth) {
+    const r = rnd();
+    if (depth === 0) return r < 0.30 ? 'done' : r < 0.55 ? 'doing' : r < 0.88 ? 'todo' : 'blocked';
+    return r < 0.40 ? 'done' : r < 0.60 ? 'doing' : r < 0.90 ? 'todo' : 'blocked';
+  }
+
+  const MAIN_COUNT = 48;
+  for (let i = 0; i < MAIN_COUNT; i += 1) {
+    // 一部分任务归到已收尾的 M1 —— 否则"里程碑进度"里会出现一个 0/0 的空里程碑
+    const closed = rnd() < 0.22;
+    const ms = closed ? MILESTONES[0] : MILESTONES[1 + int(0, 2)];
+    const m = addTask({
+      id: 'M' + i,
+      title: pick(VERBS) + pick(NOUNS) + pick(TAILS),
+      depth: 0,
+      status: closed ? 'done' : rollStatus(0),
+      tags: [pick(TAGS)],
+      milestone: ms.id,
+      closed,
+    });
+    const nKids = [0, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8][int(0, 10)];
+    for (let k = 0; k < nKids; k += 1) {
+      const c = addTask({
+        id: m.id + '-' + k,
+        parent: m.id,
+        depth: 1,
+        title: pick(VERBS) + pick(NOUNS) + pick(TAILS),
+        status: closed ? 'done' : rollStatus(1),
+        tags: rnd() < 0.5 ? [pick(TAGS)] : [],
+        milestone: m.milestone,
+        closed,
+      });
+      m.children.push(c.id);
+      if (rnd() < 0.34) {
+        const nG = int(1, 3);
+        for (let g = 0; g < nG; g += 1) {
+          const gc = addTask({
+            id: c.id + '.' + g,
+            parent: c.id,
+            depth: 2,
+            title: pick(VERBS) + pick(NOUNS) + pick(TAILS),
+            status: closed ? 'done' : rollStatus(2),
+            tags: rnd() < 0.3 ? [pick(TAGS)] : [],
+            milestone: m.milestone,
+            closed,
+          });
+          c.children.push(gc.id);
+        }
+      }
+    }
+  }
+
+  // 祖先链
+  for (const t of tasks) {
+    let cur = t.parent ? byId.get(t.parent) : null;
+    while (cur) { t.ancestors.push(cur.id); cur = cur.parent ? byId.get(cur.parent) : null; }
+    t.root = t.ancestors.length ? t.ancestors[t.ancestors.length - 1] : t.id;
+  }
+
+  // 前置依赖：只连到"更早"的任务，保证无环。
+  // 兄弟之间有依赖 → 下钻时能看到同簇内的依赖弧线。已收尾的 M1 任务不参与。
+  for (const t of tasks) {
+    if (t.closed) continue;
+    if (t.depth === 1 && t.parent) {
+      const sibs = byId.get(t.parent).children.filter((s) => !byId.get(s).closed);
+      const idx = sibs.indexOf(t.id);
+      if (idx > 0 && rnd() < 0.30) t.blockedBy.push(sibs[int(0, idx - 1)]);
+    } else if (t.depth === 0 && tasks.indexOf(t) > 6 && rnd() < 0.22) {
+      const earlier = tasks.filter((x) => x.depth === 0 && !x.closed && x.id !== t.id && tasks.indexOf(x) < tasks.indexOf(t));
+      if (earlier.length) t.blockedBy.push(pick(earlier).id);
+    }
+  }
+  for (const t of tasks) {
+    for (const b of t.blockedBy) {
+      byId.get(b).deps.push(t.id);
+    }
+  }
+  // 前置没做完的任务，多半会显示成「被阻塞」
+  for (const t of tasks) {
+    if (t.closed) continue;
+    const undone = t.blockedBy.filter((b) => byId.get(b).status !== 'done').length;
+    if (undone && t.status === 'todo' && rnd() < 0.45) t.status = 'blocked';
+  }
+
+  const mains = tasks.filter((t) => t.depth === 0);
+  const subs = tasks.filter((t) => t.depth === 1);
+  const grands = tasks.filter((t) => t.depth === 2);
+
+  /** 子树规模（含自己） */
+  function sizeOf(t) {
+    let n = 1;
+    for (const k of t.children) n += sizeOf(byId.get(k));
+    return n;
+  }
+  for (const t of tasks) t.size = sizeOf(t);
+
+  /** 子任务完成度 */
+  function progressOf(t) {
+    const all = [];
+    const walk = (x) => { for (const k of x.children) { all.push(byId.get(k)); walk(byId.get(k)); } };
+    walk(t);
+    if (!all.length) return null;
+    const done = all.filter((x) => x.status === 'done').length;
+    return { done, total: all.length, pct: Math.round((done / all.length) * 100) };
+  }
+
+  const STATUS_META = {
+    todo: { label: '待办', color: 'var(--todo)', varName: '--todo' },
+    doing: { label: '进行中', color: 'var(--accent)', varName: '--accent' },
+    blocked: { label: '被阻塞', color: 'var(--warn)', varName: '--warn' },
+    done: { label: '已完成', color: 'var(--ok)', varName: '--ok' },
+  };
+
+  /* ==================================================================
+     2) 六边形几何（flat-top，轴向坐标）
+     ================================================================== */
+
+  const SQ3 = Math.sqrt(3);
+
+  const hexToPixel = (q, r, s) => ({ x: s * 1.5 * q, y: s * SQ3 * (r + q / 2) });
+
+  const HEX_DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+
+  /** flat-top 六边形的 6 个顶点 */
+  function hexPoints(cx, cy, s, scale = 1) {
+    const pts = [];
+    for (let i = 0; i < 6; i += 1) {
+      const a = (Math.PI / 180) * (60 * i);
+      pts.push([cx + Math.cos(a) * s * scale, cy + Math.sin(a) * s * scale]);
+    }
+    return pts;
+  }
+  const poly = (pts) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p[0].toFixed(2)} ${p[1].toFixed(2)}`).join(' ') + ' Z';
+
+  /** 蜂窝螺旋：半径 R 的六边形排布里的所有格子，按"离中心距离"排序 */
+  function hexSpiral(R) {
+    const out = [];
+    for (let q = -R; q <= R; q += 1) {
+      for (let r = Math.max(-R, -q - R); r <= Math.min(R, -q + R); r += 1) {
+        const d = Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r));
+        out.push({ q, r, d });
+      }
+    }
+    // 同半径内按角度排，保证相邻格子挨着
+    out.sort((a, b) => a.d - b.d || (Math.atan2(a.r, a.q) - Math.atan2(b.r, b.q)));
+    return out;
+  }
+
+  /* ==================================================================
+     3) 总览：统计卡 + 右侧面板
+     ================================================================== */
+
+  const cnt = (arr, st) => arr.filter((t) => t.status === st).length;
+  const stats = {
+    total: tasks.length,
+    main: mains.length, mainDone: cnt(mains, 'done'),
+    sub: subs.length, subDone: cnt(subs, 'done'),
+    grand: grands.length, grandDone: cnt(grands, 'done'),
+    totalDone: cnt(tasks, 'done'),
+  };
+  stats.byStatus = STATUSES.map((s) => ({ st: s, n: cnt(tasks, s) }));
+
+  function renderStats() {
+    const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+    const items = [
+      { lb: '总任务', nm: stats.total, sub: `主任务 ${stats.main} · 子任务 ${stats.sub} · 孙任务 ${stats.grand}`, v: pct(stats.totalDone, stats.total), ok: true },
+      { lb: '主任务', nm: stats.main, sub: `已完成 ${stats.mainDone}`, v: pct(stats.mainDone, stats.main) },
+      { lb: '子任务', nm: stats.sub + stats.grand, sub: `已完成 ${stats.subDone + stats.grandDone}`, v: pct(stats.subDone + stats.grandDone, stats.sub + stats.grand) },
+      { lb: '已完成占比', nm: pct(stats.totalDone, stats.total) + '%', sub: `${stats.totalDone} / ${stats.total} 个任务`, v: pct(stats.totalDone, stats.total), ok: true },
+    ];
+    document.getElementById('stats').innerHTML = items.map((it) => `
+      <div class="stat">
+        <div class="lb">${it.lb}</div>
+        <div class="nm">${it.nm}</div>
+        <div class="lb" style="margin-top:2px">${it.sub}</div>
+        <div class="bar${it.ok ? ' ok' : ''}"><i style="width:${it.v}%"></i></div>
+      </div>
+    `).join('');
+
+    document.getElementById('sideFoot').innerHTML =
+      `${stats.total} 个任务<br>${stats.main} 个主任务`;
+  }
+
+  function renderSide() {
+    const total = stats.total || 1;
+
+    const stack = stats.byStatus.map((x) => `
+      <i style="width:${(x.n / total) * 100}%;background:${STATUS_META[x.st].color}"></i>
+    `).join('');
+
+    const legend = stats.byStatus.map((x) => `
+      <div class="it"><i style="background:${STATUS_META[x.st].color}"></i>${STATUS_META[x.st].label}<span class="n">${x.n}</span></div>
+    `).join('');
+
+    const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+    const subAll = stats.sub + stats.grand;
+    const subDoneAll = stats.subDone + stats.grandDone;
+
+    const msRows = MILESTONES.map((m) => {
+      const list = tasks.filter((t) => t.milestone === m.id);
+      const done = list.filter((t) => t.status === 'done').length;
+      return `<div class="ms">
+        <div class="l1"><span>${m.name}</span><span class="n">${done}/${list.length}</span></div>
+        <div class="track"><i style="width:${pct(done, list.length)}%"></i></div>
+      </div>`;
+    }).join('');
+
+    // 被前置卡住的任务（风险清单）
+    const stuck = tasks
+      .map((t) => ({ t, n: t.blockedBy.filter((b) => byId.get(b).status !== 'done').length }))
+      .filter((x) => x.n > 0 && x.t.status !== 'done')
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 6);
+
+    document.getElementById('sidecol').innerHTML = `
+      <div class="card">
+        <h3>状态分布</h3>
+        <div class="stackbar">${stack}</div>
+        <div class="legend">${legend}</div>
+      </div>
+
+      <div class="card">
+        <h3>完成度</h3>
+        <div class="kvrow">
+          <span class="lb">主任务</span>
+          <span class="track"><i style="width:${pct(stats.mainDone, stats.main)}%;background:${STATUS_META.done.color}"></i></span>
+          <span class="n">${stats.mainDone}/${stats.main}</span>
+        </div>
+        <div class="kvrow">
+          <span class="lb">子任务</span>
+          <span class="track"><i style="width:${pct(subDoneAll, subAll)}%;background:${STATUS_META.done.color}"></i></span>
+          <span class="n">${subDoneAll}/${subAll}</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>里程碑进度</h3>
+        <div class="mslist">${msRows}</div>
+      </div>
+
+      <div class="card">
+        <h3>被前置卡住</h3>
+        ${stuck.length ? `<ul class="risk">${stuck.map((x) => `
+          <li><span class="nm" title="${x.t.title}">${x.t.title}</span><span class="n">前置 ${x.n}</span></li>
+        `).join('')}</ul>` : '<div class="empty">没有被前置卡住的任务</div>'}
+      </div>
+    `;
+  }
+
+  /* ==================================================================
+     4) 六边形关系数据图
+     ================================================================== */
+
+  const svg = document.getElementById('map');
+  const hexLayer = document.getElementById('hexes');
+  const disk = document.getElementById('disk');
+  const zoomEl = document.getElementById('zoom');
+  const tip = document.getElementById('tip');
+  const stage3d = document.getElementById('stage3d');
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => {
+    const n = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs ?? {})) n.setAttribute(k, v);
+    return n;
+  };
+
+  const view = { mode: 'map', focus: null, hover: null, spin: -18, tilt: 40, autoSpin: false, stack: [], drawer: null };
+
+  /** 地图视图：48 个主任务铺成蜂窝 */
+  const MAP_S = 40;
+  const mapCells = hexSpiral(4);            // 半径 4 → 61 格
+  let mapOrder = mains.slice().sort((a, b) => b.size - a.size);  // 越大的越靠近中心
+
+  function hexFill(t, mix = 48) {
+    const c = STATUS_META[t.status].color;
+    // 往主题底色里调，而不是用纯状态色：字压在格子上才读得清，也不会刺眼
+    return `color-mix(in srgb, ${c} ${mix}%, var(--surface))`;
+  }
+
+  /** 把标题砍成两行，每行最多 max 个字 —— 蜂窝格里放不下长标题，全文在悬停浮卡里 */
+  function splitTitle(title, max) {
+    if (title.length <= max) return [title, ''];
+    return [title.slice(0, max), title.slice(max, max * 2) + (title.length > max * 2 ? '…' : '')];
+  }
+
+  function drawMap() {
+    svg.innerHTML = '';
+    hexes.innerHTML = '';
+    view.mode = 'map';
+    // 每次画都按当前数据重排：在任务台新建/删除主任务之后，地图要跟着变
+    mapOrder = mains.slice().sort((a, b) => b.size - a.size);
+
+    const g = el('g', { class: 'mapg' });
+
+    // 参考圈：把"越靠中心越重要"这件事画出来（这圈只是坐标参考，不承载数据）
+    for (const ring of [1, 2, 3, 4]) {
+      g.appendChild(el('circle', { class: 'hx-ring', cx: 0, cy: 0, r: MAP_S * 1.65 * ring }));
+    }
+    g.appendChild(el('circle', { class: 'hx-ring', cx: 0, cy: 0, r: MAP_S * 1.65 * 4 + MAP_S * 0.8, opacity: 0 }));
+
+    mapOrder.forEach((t, i) => {
+      const cell = mapCells[i];
+      if (!cell) return;
+      const { x, y } = hexToPixel(cell.q, cell.r, MAP_S);
+      const prog = progressOf(t);
+
+      const grp = el('g', { class: 'hx', 'data-id': t.id, style: 'cursor:pointer' });
+      // 厚度：往右下偏移一个深色六边形
+      grp.appendChild(el('path', { class: 'hx-under', d: poly(hexPoints(x + 1.5, y + 3.5, MAP_S * 0.97)) }));
+      grp.appendChild(el('path', {
+        class: 'hx-top', d: poly(hexPoints(x, y, MAP_S * 0.97)),
+        fill: hexFill(t),
+        stroke: t.status === 'blocked' ? 'var(--warn)' : 'var(--border)',
+        'stroke-width': t.status === 'blocked' ? 1.6 : 1,
+        'data-id': t.id,
+      }));
+
+      // 标题：最多两行 × 4 字（六边形上缘比中间窄，写不下更多）
+      const [l1, l2] = splitTitle(t.title, 4);
+      const tx = el('text', { class: 'hx-label', x, y: y - (l2 ? 8 : 6) });
+      tx.textContent = l1;
+      grp.appendChild(tx);
+      if (l2) {
+        const tx2 = el('text', { class: 'hx-label', x, y: y + 5 });
+        tx2.textContent = l2;
+        grp.appendChild(tx2);
+      }
+
+      // 完成度：一条细弧放在格子下缘
+      if (prog) {
+        const a0 = Math.PI * (38 / 180);
+        const a1 = Math.PI * (142 / 180);
+        const rr = MAP_S * 0.5;
+        const arc = (from, to) => {
+          const p0 = [x + Math.cos(a0 + (a1 - a0) * from) * rr, y + Math.sin(a0 + (a1 - a0) * from) * rr];
+          const p1 = [x + Math.cos(a0 + (a1 - a0) * to) * rr, y + Math.sin(a0 + (a1 - a0) * to) * rr];
+          return `M ${p0[0].toFixed(2)} ${p0[1].toFixed(2)} A ${rr} ${rr} 0 0 1 ${p1[0].toFixed(2)} ${p1[1].toFixed(2)}`;
+        };
+        grp.appendChild(el('path', { class: 'hx-gauge', d: arc(0, 1) }));
+        grp.appendChild(el('path', { class: 'hx-gauge-fill', d: arc(0, Math.max(0.03, prog.pct / 100)), stroke: 'var(--ok)' }));
+      }
+
+      grp.addEventListener('mouseenter', () => setHover(t.id));
+      grp.addEventListener('mouseleave', () => setHover(null));
+      grp.addEventListener('click', () => drill(t.id));
+      g.appendChild(grp);
+    });
+
+    svg.appendChild(g);
+    document.getElementById('chartTitle').textContent = '关系数据图';
+    document.getElementById('chartSub').textContent = `一格 = 一个主任务 · 共 ${mains.length} 个 · 越靠中心任务越多`;
+    document.getElementById('btnBack').hidden = true;
+    document.getElementById('hintline').textContent = '悬停看细节 · 点任意主任务下钻成它的六边形簇';
+
+    const rx = mapCells.reduce((m, c) => Math.max(m, Math.abs(hexToPixel(c.q, c.r, MAP_S).x)), 0) + MAP_S;
+    const ry = mapCells.reduce((m, c) => Math.max(m, Math.abs(hexToPixel(c.q, c.r, MAP_S).y)), 0) + MAP_S;
+    fitZoom(rx, ry);
+  }
+
+  /* ---------- 下钻：六边形簇（容器卡 + 环绕） ----------
+
+     用**极坐标花形**而不是"蜂窝大格子里画小格子"：
+     后者格子大、六边形小，中间全是缝，看起来是散的；花形里六边形彼此挨着，
+     中心卡 → 一圈子任务 → 每个子任务周围一圈孙任务，正好是"环绕"的意思。
+
+     不重叠用六边形的真实几何判定：两个外接半径为 s1/s2 的六边形，
+     中心距 ≥ √3·(s1+s2)/2 就不会重叠（就是"共边"的距离）。
+  */
+
+  const CS = { root: 48, child: 33, grand: 24 };
+
+  /** 两个六边形会不会压：共边距离再留 5% 余量，允许"贴着"，不允许"压着" */
+  const hexGap = (s1, s2) => (SQ3 * (s1 + s2)) / 2 * 0.95;
+  const noOverlap = (placed, p) =>
+    !placed.some((o) => o.id !== p.id && Math.hypot(o.x - p.x, o.y - p.y) < hexGap(o.s, p.s));
+
+  /** 摆一簇：中心 + 子任务环 + 孙任务环 */
+  function layoutCluster(focus) {
+    const out = [{ id: focus.id, x: 0, y: 0, s: CS.root, cls: 'root', angle: -Math.PI / 2 }];
+
+    const kids = focus.children;
+    const n = kids.length || 1;
+    // 子任务环的半径：既要装得下这么多六边形，又不能压到中心卡
+    const needR = (n * (CS.child * 2 + 8)) / (2 * Math.PI);
+    const R1 = Math.max(CS.root + CS.child + 9, needR);
+
+    kids.forEach((cid, i) => {
+      const a = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+      out.push({ id: cid, x: Math.cos(a) * R1, y: Math.sin(a) * R1, s: CS.child, cls: 'g1', angle: a });
+    });
+
+    // 孙任务：围着自己的父格子、朝离开中心的方向扇开
+    const R2 = CS.child + CS.grand + 8;
+    const spread = Math.min(Math.PI / 2.6, 0.42 * ((2 * Math.PI) / n) + 0.26);
+    for (const rec of out.filter((r) => r.cls === 'g1')) {
+      const grandkids = byId.get(rec.id).children;
+      const m = grandkids.length;
+      grandkids.forEach((gid, j) => {
+        const base = rec.angle;
+        const off = m === 1 ? 0 : -spread + (2 * spread * j) / (m - 1);
+        const tries = [off, off + 0.3, off - 0.3, off + 0.6, off - 0.6, off + 0.95, off - 0.95, off + 1.3, off - 1.3];
+        let spot = null;
+        for (const d of tries) {
+          const a = base + d;
+          const p = { id: gid, x: rec.x + Math.cos(a) * R2, y: rec.y + Math.sin(a) * R2, s: CS.grand };
+          if (noOverlap(out, p)) { spot = p; break; }
+        }
+        // 实在挤不下就再往外挪一圈，而不是把两个六边形叠在一起
+        if (!spot) {
+          const a = base;
+          spot = { id: gid, x: rec.x + Math.cos(a) * R2 * 1.85, y: rec.y + Math.sin(a) * R2 * 1.85, s: CS.grand };
+        }
+        out.push({ id: gid, x: spot.x, y: spot.y, s: CS.grand, cls: 'g2', angle: base });
+      });
+    }
+    return out;
+  }
+
+  function drawCluster(focusId) {
+    const m = byId.get(focusId);
+    svg.innerHTML = '';
+    hexes.innerHTML = '';
+    document.getElementById('chartTitle').textContent = m.title;
+    document.getElementById('chartSub').textContent =
+      `${m.depth === 0 ? '主任务' : m.depth === 1 ? '子任务' : '孙任务'} · ${STATUS_META[m.status].label} · ${m.children.length} 个下级`;
+    document.getElementById('btnBack').hidden = false;
+    document.getElementById('hintline').textContent = '悬停看它的前置依赖 · 点有下级的六边形继续下钻 · Esc 返回';
+    view.mode = 'cluster';
+    view.focus = focusId;
+
+    const cells = layoutCluster(m);
+
+    let maxR = 0;
+    for (const rec of cells) {
+      maxR = Math.max(maxR, Math.hypot(rec.x, rec.y) + rec.s);
+      const card = makeHexCard(byId.get(rec.id), rec);
+      hexes.appendChild(card);
+    }
+    // 放进 DOM 之后逐个量着减字（固定尺寸的六边形里，标题放不下就得真减）
+    for (const card of hexes.children) fitHexLabel(card);
+
+    // 依赖弧线
+    const arcs = el('g', { class: 'arcg' });
+    for (const rec of cells) {
+      const t = byId.get(rec.id);
+      for (const b of t.blockedBy) {
+        const a = cells.find((x) => x.id === b);
+        if (!a) continue;
+        const mx = (a.x + rec.x) / 2;
+        const my = (a.y + rec.y) / 2;
+        arcs.appendChild(el('path', {
+          class: 'dep-arc', 'data-from': b, 'data-to': rec.id,
+          d: `M ${a.x.toFixed(1)} ${a.y.toFixed(1)} Q ${(mx * 1.35).toFixed(1)} ${(my * 1.35).toFixed(1)} ${rec.x.toFixed(1)} ${rec.y.toFixed(1)}`,
+        }));
+      }
+    }
+    svg.appendChild(arcs);
+
+    fitZoom(maxR, maxR);
+
+    // 入场：错峰飞出
+    [...hexes.children].forEach((node, i) => {
+      node.classList.add('fly');
+      node.style.animationDelay = `${Math.min(i * 26, 460)}ms`;
+    });
+  }
+
+  /** 标题超过两行就逐字减到放得下为止（六边形宽度是固定的，不量就一定会裁） */
+  function fitHexLabel(card) {
+    const tl = card.querySelector('.tl');
+    if (!tl) return;
+    const full = tl.textContent;
+    let t = full;
+    let guard = 0;
+    while (tl.scrollHeight > tl.clientHeight + 1 && t.length > 2 && guard < 40) {
+      t = t.slice(0, -1);
+      tl.textContent = t + '…';
+      guard += 1;
+    }
+    if (t !== full) card.dataset.trimmed = '1';
+  }
+
+  /** 一个六边形"卡片"：三层（厚度 / 边框 / 填充）+ 标题。极简：只有标题，不放详情 */
+  function makeHexCard(t, rec) {
+    const s = rec.s;
+    const w = s * 2;
+    const h = s * SQ3;
+    const node = document.createElement('div');
+    node.className = 'hexc ' + rec.cls;
+    node.dataset.id = t.id;
+    node.dataset.size = String(s);        // 自检用：几何判定要拿到真实半径
+    node.dataset.x = String(Math.round(rec.x));
+    node.dataset.y = String(Math.round(rec.y));
+    node.style.width = w + 'px';
+    node.style.height = h + 'px';
+    node.style.left = rec.x + 'px';
+    node.style.top = rec.y + 'px';
+    node.style.marginLeft = -w / 2 + 'px';
+    node.style.marginTop = -h / 2 + 'px';
+
+    const st = STATUS_META[t.status];
+    const fillMix = rec.cls === 'root' ? 24 : rec.cls === 'g1' ? 18 : 12;
+    const fill = `color-mix(in srgb, ${st.color} ${fillMix}%, var(--surface))`;
+    const brd = t.status === 'blocked' ? 'var(--warn)' : rec.cls === 'root' ? 'var(--accent)' : 'var(--border)';
+    const maxChars = rec.cls === 'root' ? 26 : rec.cls === 'g1' ? 14 : 8;
+    const label = t.title.length > maxChars ? t.title.slice(0, maxChars) + '…' : t.title;
+    const prog = progressOf(t);
+
+    node.innerHTML = `
+      <i class="under"></i>
+      <i class="brd" style="background:${brd}"></i>
+      <i class="fill" style="background:${fill}"></i>
+      <span class="txt"><span class="tl">${label}</span></span>
+      ${rec.cls === 'root' && prog ? `<span class="tagline">子任务 ${prog.done}/${prog.total}</span>` : ''}
+    `;
+
+    node.addEventListener('mouseenter', () => setHover(t.id));
+    node.addEventListener('mouseleave', () => setHover(null));
+    node.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (t.children.length) drill(t.id);
+    });
+
+    return node;
+  }
+
+  /* ---------- 相机 / 缩放 ----------
+     盘面是斜的：横向占多少还是多少，纵向会被压掉 cos(倾角)，
+     所以两个方向要分别算，否则要么装不下、要么白白留一圈空白。 */
+
+  function fitZoom(rx, ry) {
+    const chart = document.getElementById('chart');
+    const pad = 34;
+    const availW = Math.max(120, chart.clientWidth - pad);
+    const availH = Math.max(120, chart.clientHeight - pad);
+    const needW = rx * 2 + 56;
+    const needH = (ry * 2 + 56) * Math.cos((view.tilt * Math.PI) / 180);
+    const z = Math.min(availW / needW, availH / needH, 1.8);
+    const clamped = Math.max(0.3, z);
+    zoomEl.style.setProperty('--zoom', String(clamped));
+    return clamped;
+  }
+
+  /* ---------- 悬停：细节浮卡（正立）+ 关系高亮 ---------- */
+
+  function setHover(id) {
+    view.hover = id;
+    const related = id ? relatedOf(id) : null;
+
+    // 下钻态：六边形卡片做两级退让
+    if (view.mode === 'cluster') {
+      for (const node of hexes.children) {
+        const nid = node.dataset.id;
+        const isRel = !id || related.has(nid);
+        node.classList.toggle('dim', Boolean(id) && !isRel);
+        node.classList.toggle('hot', Boolean(id) && nid === id);
+      }
+      // 依赖弧线只在悬停子任务时出现
+      for (const p of svg.querySelectorAll('.dep-arc')) {
+        const on = Boolean(id) && (p.dataset.from === id || p.dataset.to === id);
+        p.classList.toggle('on', on);
+      }
+    } else {
+      // 地图态：无关格子退灰
+      for (const g of svg.querySelectorAll('g.hx')) {
+        const nid = g.dataset.id;
+        const isRel = !id || related.has(nid);
+        g.style.opacity = id && !isRel ? '0.26' : '1';
+      }
+    }
+
+    if (!id) { tip.classList.remove('on'); return; }
+
+    const t = byId.get(id);
+    const prog = progressOf(t);
+    const blockers = t.blockedBy.map((b) => byId.get(b));
+    const undone = blockers.filter((b) => b.status !== 'done').length;
+    const st = STATUS_META[t.status];
+
+    tip.innerHTML = `
+      <div class="t1"><span class="st" style="--st:${st.color}">${st.label}</span>
+        <span class="nm">${t.title}</span></div>
+      <div class="kv"><span class="k">层级</span>${t.depth === 0 ? '主任务' : t.depth === 1 ? '子任务' : '孙任务'}
+        ${t.depth > 0 ? `<span class="k" style="margin-left:6px">属于</span>${byId.get(t.root).title}` : ''}</div>
+      ${prog ? `<div class="kv"><span class="k">子任务</span>${prog.done}/${prog.total} 已完成</div>` : ''}
+      ${blockers.length ? `<div class="kv"><span class="k">前置</span>${blockers.length} 个${undone ? `（其中 ${undone} 个未完成）` : '（均已完成）'}</div>` : ''}
+      ${t.tags.length ? `<div class="kv"><span class="k">标签</span>${t.tags.map((x) => '#' + x).join(' ')}</div>` : ''}
+      <div class="go">${view.mode === 'map' && t.depth === 0 ? '点击下钻 →' : '点「任务」页看完整详情'}</div>
+    `;
+
+    // 定位：用元素在屏幕上的实际位置（已经含盘面倾斜与自转）
+    const anchor = view.mode === 'cluster'
+      ? [...hexes.children].find((n) => n.dataset.id === id)
+      : svg.querySelector(`g.hx[data-id="${id}"] .hx-top`);
+    if (!anchor) return;
+    const chart = document.getElementById('chart');
+    const cb = chart.getBoundingClientRect();
+    const ab = anchor.getBoundingClientRect();
+    const w = 236;
+    let left = ab.left - cb.left + ab.width / 2 + 14;
+    let top = ab.top - cb.top + ab.height / 2 - 30;
+    left = Math.min(Math.max(8, left), chart.clientWidth - w - 8);
+    top = Math.min(Math.max(8, top), chart.clientHeight - 132);
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+    tip.classList.add('on');
+  }
+
+  function showTipFor() { /* 预留：无子任务的叶子任务 */ }
+
+  /** 关系集合：祖先链 + 后代 + 依赖 + 同标签 */
+  function relatedOf(id) {
+    const out = new Set([id]);
+    const t = byId.get(id);
+    if (!t) return out;
+    for (const a of t.ancestors) out.add(a);
+    const walk = (x) => { for (const k of x.children) { out.add(k); walk(byId.get(k)); } };
+    walk(t);
+    for (const b of t.blockedBy) out.add(b);
+    for (const d of t.deps) out.add(d);
+    // 同标签关系可能是几十个，全画出来又乱又慢 —— 只取"最近"的若干个
+    if (t.tags.length) {
+      const tagged = tasks
+        .filter((s) => s.id !== id && s.tags.some((x) => t.tags.includes(x)))
+        .sort((a, b) => Math.abs((a.ord ?? 0) - (t.ord ?? 0)) - Math.abs((b.ord ?? 0) - (t.ord ?? 0)))
+        .slice(0, 8);
+      for (const s of tagged) out.add(s.id);
+    }
+    return out;
+  }
+
+  /* ---------- 视图切换：下钻用栈，可以一层层退回去 ---------- */
+
+  function drill(id) {
+    const t = byId.get(id);
+    if (!t || !t.children.length) return;   // 没有下级的六边形点了不下钻
+    view.stack.push(id);
+    drawCluster(id);
+  }
+
+  function upOne() {
+    view.stack.pop();
+    const prev = view.stack[view.stack.length - 1];
+    if (prev) drawCluster(prev);
+    else backToMap();
+  }
+
+  function backToMap() {
+    view.stack = [];
+    view.focus = null;
+    view.hover = null;
+    tip.classList.remove('on');
+    drawMap();
+  }
+
+  /* ---------- 盘面旋转 / 视角 ---------- */
+
+  function setSpin(v) {
+    view.spin = v;
+    disk.style.setProperty('--spin', v + 'deg');
+  }
+  function setTilt(v) {
+    view.tilt = v;
+    disk.style.setProperty('--tilt', v + 'deg');
+  }
+  setSpin(view.spin);
+  setTilt(view.tilt);
+
+  let drag = null;
+  stage3d.addEventListener('pointerdown', (ev) => {
+    if (view.mode !== 'map' && view.mode !== 'cluster') return;
+    drag = { x: ev.clientX, spin: view.spin };
+    stage3d.classList.add('dragging');
+    stage3d.setPointerCapture(ev.pointerId);
+  });
+  stage3d.addEventListener('pointermove', (ev) => {
+    if (!drag) return;
+    setSpin(drag.spin + (ev.clientX - drag.x) * 0.28);
+  });
+  const endDrag = () => { drag = null; stage3d.classList.remove('dragging'); };
+  stage3d.addEventListener('pointerup', endDrag);
+  stage3d.addEventListener('pointercancel', endDrag);
+
+  setInterval(() => { if (view.autoSpin && !drag) setSpin(view.spin + 0.18); }, 16);
+
+  /* ==================================================================
+     5) 控件与页面切换
+     ================================================================== */
+
+  document.querySelectorAll('.side .nav').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.side .nav').forEach((x) => x.classList.toggle('on', x === b));
+      document.querySelectorAll('.page').forEach((p) => p.classList.toggle('on', p.id === 'page-' + b.dataset.page));
+      if (b.dataset.page === 'tasks') {
+        // 切过来才首次布局：页面隐藏时量不到高度，虚拟滚动算不出可视范围
+        refreshBoard();
+        requestAnimationFrame(() => { for (const c of board.cols) paintCol(c, false); paintRelations(); });
+      } else {
+        // 切回去时总览的数字和六边形图要跟上（在任务台改过任务了）
+        renderStats();
+        renderSide();
+        if (view.mode === 'map') drawMap(); else drawCluster(view.focus);
+      }
+    });
+  });
+
+  document.getElementById('btnBack').addEventListener('click', upOne);
+  document.getElementById('btnSpin').addEventListener('click', (ev) => {
+    view.autoSpin = !view.autoSpin;
+    ev.target.classList.toggle('on', view.autoSpin);
+  });
+  document.getElementById('btnTilt').addEventListener('click', () => {
+    const next = { 40: 22, 22: 0, 0: 40 }[view.tilt] ?? 40;
+    setTilt(next);
+    const maxR = view.mode === 'map' ? MAP_S * 1.5 * 4 + MAP_S : 320;
+    fitZoom(maxR, maxR);
+  });
+  window.addEventListener('resize', () => {
+    const maxR = view.mode === 'map' ? MAP_S * 1.5 * 4 + MAP_S : 320;
+    fitZoom(maxR, maxR);
+  });
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && view.mode === 'cluster') upOne();
+  });
+
+  /* ==================================================================
+     6) 任务台：分列看板 + 卡内子树 + 按需关系层（虚拟滚动）
+     ================================================================== */
+
+  // DFS 序号：列内排序用它 —— 子任务永远紧跟在主任务后面，缩进才有意义
+  let ordSeq = 0;
+  for (const t of tasks) {
+    if (t.depth === 0) {
+      const walk = (x) => { x.ord = ordSeq; ordSeq += 1; for (const k of x.children) walk(byId.get(k)); };
+      walk(t);
+    }
+  }
+
+  const board = {
+    built: false,
+    cols: [],
+    collapsed: new Set(),     // 折叠起来的主任务/子任务
+    onlyMain: false,
+    query: '',
+    hover: null,
+    pinned: null,
+    rendered: 0,
+  };
+
+  const colsEl = document.getElementById('cols');
+  const relLayer = document.getElementById('relLayer');
+  const NS2 = 'http://www.w3.org/2000/svg';
+  const el2 = (tag, attrs) => {
+    const n = document.createElementNS(NS2, tag);
+    for (const [k, v] of Object.entries(attrs ?? {})) n.setAttribute(k, v);
+    return n;
+  };
+
+  /* ---------- 建列 ---------- */
+
+  function buildBoard() {
+    if (board.built) return;
+    board.built = true;
+    for (const st of STATUSES) {
+      const col = document.createElement('section');
+      col.className = 'col';
+      col.dataset.st = st;
+      col.innerHTML = `
+        <div class="col-head">
+          <i class="dot" style="background:${STATUS_META[st].color}"></i>
+          <span>${STATUS_META[st].label}</span>
+          <span class="n"></span>
+          <span class="spacer"></span>
+          <span class="edge" hidden></span>
+        </div>
+        <div class="col-scroll"><div class="col-spacer"></div></div>
+      `;
+      colsEl.appendChild(col);
+      const rec = {
+        st,
+        el: col,
+        scroller: col.querySelector('.col-scroll'),
+        spacer: col.querySelector('.col-spacer'),
+        rows: [],
+        offsets: [],
+        heights: new Map(),
+        nodes: new Map(),
+      };
+      rec.scroller.addEventListener('scroll', () => paintCol(rec, false));
+      board.cols.push(rec);
+    }
+  }
+
+  /* ---------- 行：缩进的子任务 + 跨列幽灵行 ---------- */
+
+  function buildRows() {
+    const q = board.query.trim();
+    // 搜索时保留"命中项 + 它的祖先链 + 它的后代"：否则会出现"搜到了却看不到"
+    const memo = new Map();
+    const matches = (t) => {
+      if (memo.has(t.id)) return memo.get(t.id);
+      const r = t.title.includes(q) || t.children.some((k) => matches(byId.get(k)));
+      memo.set(t.id, r);
+      return r;
+    };
+    for (const col of board.cols) {
+      const rows = [];
+      const walk = (t, hidden) => {
+        if (hidden) return;
+        if (board.onlyMain && t.depth > 0) return;
+        if (q && !matches(t)) return;
+        const hit = t.status === col.st;
+        if (hit) rows.push({ type: 'task', key: 't:' + t.id, task: t });
+        const collapsed = board.collapsed.has(t.id) && !q;
+        for (const k of t.children) walk(byId.get(k), collapsed);
+        // 子任务在别的列 → 一行幽灵，指过去；比每个子任务都插一行安静得多
+        if (hit && !collapsed && t.children.length) {
+          const counts = new Map();
+          for (const k of t.children) {
+            const c = byId.get(k);
+            if (c.status !== col.st) counts.set(c.status, (counts.get(c.status) || 0) + 1);
+          }
+          for (const [toCol, n] of counts) {
+            rows.push({ type: 'ghost', key: `g:${t.id}:${toCol}`, parent: t, toCol, n });
+          }
+        }
+      };
+      for (const t of tasks) if (t.depth === 0) walk(t, false);
+      col.rows = rows;
+    }
+  }
+
+  const rowVariant = (r) =>
+    r.type === 'ghost' ? 'g' : (r.task.children.length ? (board.collapsed.has(r.task.id) ? 'c' : 'e') : '-');
+
+  /** 默认高度只是"还没量过"时的占位；量过之后按真实高度算偏移 */
+  const estimateOf = (r) => (r.type === 'ghost' ? 26 : r.task.children.length && !board.collapsed.has(r.task.id) ? 74 : 54);
+
+  function relayout(col) {
+    let y = 0;
+    col.offsets = col.rows.map((r) => {
+      const o = y;
+      y += col.heights.get(r.key + '|' + rowVariant(r)) ?? estimateOf(r);
+      return o;
+    });
+    col.total = y + 6;
+    col.spacer.style.height = col.total + 'px';
+  }
+
+  /* ---------- 虚拟滚动：只渲染视口附近的卡片 ---------- */
+
+  /** 二分找第一个"底边"在 y 之后的行 —— 行高不固定，所以不能除以平均高度 */
+  function indexAt(col, y) {
+    let lo = 0;
+    let hi = col.rows.length - 1;
+    if (y <= 0) return 0;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const bottom = col.offsets[mid] + (col.heights.get(col.rows[mid].key + '|' + rowVariant(col.rows[mid])) ?? estimateOf(col.rows[mid]));
+      if (bottom < y) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  function paintCol(col, reset) {
+    if (!col.rows.length) {
+      col.spacer.style.height = '0px';
+      for (const node of col.nodes.values()) node.remove();
+      col.nodes.clear();
+      return;
+    }
+    if (reset) {
+      for (const node of col.nodes.values()) node.remove();
+      col.nodes.clear();
+      relayout(col);
+    }
+
+    const BUFFER = 420;
+    const top = Math.max(0, col.scroller.scrollTop - BUFFER);
+    const bottom = col.scroller.scrollTop + col.scroller.clientHeight + BUFFER;
+    const from = indexAt(col, top);
+    let to = from;
+    while (to < col.rows.length && col.offsets[to] < bottom) to += 1;
+
+    const keep = new Set();
+    let dirty = false;
+    for (let i = from; i < to; i += 1) {
+      const r = col.rows[i];
+      const vkey = r.key + '|' + rowVariant(r);
+      keep.add(vkey);
+      let node = col.nodes.get(vkey);
+      if (!node) {
+        node = r.type === 'ghost' ? ghostRow(r, col) : taskCard(r.task, col);
+        node.style.top = col.offsets[i] + 'px';
+        col.scroller.appendChild(node);
+        col.nodes.set(vkey, node);
+        // 先入 DOM 再量：量出来的才是真高度
+        const h = node.offsetHeight;
+        if (col.heights.get(vkey) !== h) {
+          col.heights.set(vkey, h);
+          dirty = true;
+        }
+      }
+      node.dataset.idx = String(i);
+      node.style.top = col.offsets[i] + 'px';
+    }
+    for (const [k, node] of [...col.nodes]) {
+      if (!keep.has(k)) { node.remove(); col.nodes.delete(k); }
+    }
+    if (dirty) {
+      relayout(col);
+      for (const node of col.nodes.values()) {
+        const i = Number(node.dataset.idx);
+        if (col.offsets[i] !== undefined) node.style.top = col.offsets[i] + 'px';
+      }
+    }
+  }
+
+  function taskCard(t, col) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.dataset.id = t.id;
+    row.style.setProperty('--ind', String(Math.min(t.depth, 3)));
+
+    const card = document.createElement('article');
+    card.className = 'rc'
+      + (t.children.length ? ' parent' : '')
+      + (t.children.length && !board.collapsed.has(t.id) ? ' open' : '')
+      + (t.depth > 0 ? ' deep' : '');
+    card.dataset.id = t.id;
+
+    const st = STATUS_META[t.status];
+    const undone = t.blockedBy.filter((b) => byId.get(b).status !== 'done').length;
+    const prog = progressOf(t);
+
+    card.innerHTML = `
+      <div class="r1">
+        <i class="sd" style="background:${st.color}"></i>
+        <span class="tt" title="${t.title}">${t.title}</span>
+        <span class="deps">
+          ${undone ? `<span class="bdg blk" title="${undone} 个前置未完成">⛔ ${undone}</span>` : ''}
+          ${t.deps.length ? `<span class="bdg dn" title="挡着 ${t.deps.length} 个后续任务">→ ${t.deps.length}</span>` : ''}
+        </span>
+      </div>
+      <div class="r2">
+        ${prog ? `<span class="track"><i style="width:${prog.pct}%"></i></span><span>${prog.done}/${prog.total}</span>` : ''}
+        ${t.tags.map((x) => `<span class="tag">#${x}</span>`).join('')}
+        <span class="ms">${t.milestone}</span>
+      </div>
+      ${t.children.length ? `<div class="strip" data-toggle="${t.id}">
+        <span class="chev">▼</span><span>子任务 ${t.children.length}</span>
+      </div>` : ''}
+      <div class="acts">
+        <button class="del" title="删除">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+            <path d="M3.6 6.4h16.8" /><rect x="8.9" y="2.6" width="6.2" height="3.8" rx="1.6" />
+            <path d="M5.6 6.4h12.8v12.2a2.2 2.2 0 0 1-2.2 2.2H7.8a2.2 2.2 0 0 1-2.2-2.2z" />
+            <path d="M9.6 10.4v6.4M12 10.4v6.4M14.4 10.4v6.4" />
+          </svg>
+        </button>
+      </div>
+    `;
+    // 状态标签单独放在左下，点它换状态（改状态是最常用的操作）
+    const stBtn = document.createElement('button');
+    stBtn.className = 'st';
+    stBtn.style.setProperty('--st', st.color);
+    stBtn.textContent = st.label;
+    stBtn.title = '点击切换状态';
+    stBtn.addEventListener('click', (ev) => { ev.stopPropagation(); statusMenu(stBtn, t); });
+    card.querySelector('.r2').appendChild(stBtn);
+
+    card.addEventListener('click', (ev) => {
+      const tg = ev.target.closest('[data-toggle]');
+      if (tg) { ev.stopPropagation(); toggleCollapse(tg.dataset.toggle); return; }
+      if (ev.target.closest('.del')) { ev.stopPropagation(); askDelete(t.id); return; }
+      if (ev.target.closest('.st')) return;
+      openDrawer(t.id);
+    });
+    card.addEventListener('mouseenter', () => { board.hover = t.id; paintRelations(); });
+    card.addEventListener('mouseleave', () => { board.hover = null; paintRelations(); });
+
+    row.appendChild(card);
+    return row;
+  }
+
+  function ghostRow(r, col) {
+    const row = document.createElement('div');
+    row.className = 'row ghost';
+    row.style.setProperty('--ind', String(Math.min(r.parent.depth + 1, 3)));
+    const inner = document.createElement('div');
+    inner.className = 'ghost-row';
+    inner.innerHTML = `<span>${r.n} 个子任务在「${STATUS_META[r.toCol].label}」列</span><span>→</span>`;
+    inner.addEventListener('click', () => revealFirstChildIn(r.parent.id, r.toCol));
+    row.appendChild(inner);
+    return row;
+  }
+
+  /* ---------- 展开 / 折叠 ---------- */
+
+  function toggleCollapse(id) {
+    if (board.collapsed.has(id)) board.collapsed.delete(id);
+    else board.collapsed.add(id);
+    refreshBoard(id);
+  }
+
+  /** 重画看板。focusId 用来在新位置闪一下，让眼睛跟得上 */
+  function refreshBoard(flashId) {
+    buildBoard();
+    buildRows();
+    for (const col of board.cols) {
+      const n = col.rows.filter((r) => r.type === 'task').length;
+      col.el.querySelector('.col-head .n').textContent = String(n);
+      // 行数变了，缓存的高度键也可能变，但按 key+variant 存所以还能用
+    }
+    for (const col of board.cols) paintCol(col, true);
+    if (flashId) flashCard(flashId);
+    updateScale();
+    paintRelations();
+  }
+
+  function flashCard(id) {
+    const node = [...board.cols.flatMap((c) => [...c.nodes.values()])].find((n) => n.dataset.id === id);
+    if (!node) return;
+    const card = node.querySelector('.rc');
+    if (!card) return;
+    card.classList.remove('flash');
+    void card.offsetWidth;
+    card.classList.add('flash');
+  }
+
+  function updateScale() {
+    const total = board.cols.reduce((a, c) => a + c.rows.filter((r) => r.type === 'task').length, 0);
+    let dom = 0;
+    for (const c of board.cols) dom += c.nodes.size;
+    board.rendered = dom;
+    document.getElementById('scaleInfo').innerHTML =
+      `共 <b>${tasks.length}</b> 个任务 · 当前显示 <b>${total}</b> 行 · DOM 里只有 <b>${dom}</b> 个卡片`;
+  }
+
+  /* ---------- 按需关系层：悬停才画线 ---------- */
+
+  function cardRect(id) {
+    for (const col of board.cols) {
+      for (const node of col.nodes.values()) {
+        if (node.dataset.id === id) return node.querySelector('.rc').getBoundingClientRect();
+      }
+    }
+    return null;
+  }
+
+  function paintRelations() {
+    const focusId = board.hover || board.pinned;
+    relLayer.innerHTML = '';
+    colsEl.classList.toggle('focusing', Boolean(focusId));
+    colsEl.classList.toggle('strict', Boolean(board.pinned));
+    for (const col of board.cols) col.el.querySelector('.edge').hidden = true;
+    if (!focusId) {
+      for (const node of board.cols.flatMap((c) => [...c.nodes.values()])) {
+        node.querySelector('.rc')?.classList.remove('rel', 'kin', 'focus');
+      }
+      return;
+    }
+
+    const focusTask = byId.get(focusId);
+    const rel = relatedOf(focusId);
+    const kin = new Set();
+    for (const s of tasks) {
+      if (s.milestone === focusTask.milestone) kin.add(s.id);
+    }
+
+    for (const col of board.cols) {
+      for (const node of [...col.nodes.values()]) {
+        const card = node.querySelector('.rc');
+        if (!card) continue;
+        const id = node.dataset.id;
+        const isRel = id === focusId || rel.has(id);
+        card.classList.toggle('rel', isRel);
+        card.classList.toggle('focus', id === focusId);
+        card.classList.toggle('kin', !isRel && kin.has(id));
+      }
+    }
+
+    // 关系连线（只连"看得见"的那一端；看不见的在列头给指示）
+    const boardBox = colsEl.getBoundingClientRect();
+    const svgRect = relLayer.getBoundingClientRect();
+    relLayer.setAttribute('viewBox', `0 0 ${svgRect.width} ${svgRect.height}`);
+    const a = cardRect(focusId);
+    const links = [];
+    for (const rid of rel) {
+      if (rid === focusId) continue;
+      const b = cardRect(rid);
+      const rt = byId.get(rid);
+      const kind = focusTask.children.includes(rid) || focusTask.parent === rid
+        ? 'rel-parent'
+        : focusTask.blockedBy.includes(rid) || rt.blockedBy.includes(focusId)
+          ? 'rel-dep'
+          : 'rel-tag';
+      if (b) {
+        links.push({ kind, a, b });
+      } else {
+        // 不在 DOM 里（滚出了视口 / 被折叠）：在它所属列的列头标个方向
+        const col = board.cols.find((c) => c.st === rt.status);
+        if (!col) continue;
+        const idx = col.rows.findIndex((r) => r.type === 'task' && r.task.id === rid);
+        if (idx < 0) continue;
+        const above = col.offsets[idx] < col.scroller.scrollTop;
+        const edge = col.el.querySelector('.edge');
+        const cur = edge.dataset.n ? Number(edge.dataset.n) : 0;
+        edge.dataset.n = String(cur + 1);
+        edge.hidden = false;
+        edge.textContent = `${above ? '↑' : '↓'} ${cur + 1} 个关系在外面`;
+      }
+    }
+    for (const l of links) {
+      const x1 = l.a.left - boardBox.left + l.a.width / 2;
+      const y1 = l.a.top - boardBox.top + l.a.height / 2;
+      const x2 = l.b.left - boardBox.left + l.b.width / 2;
+      const y2 = l.b.top - boardBox.top + l.b.height / 2;
+      const dx = (x2 - x1) * 0.42;
+      relLayer.appendChild(el2('path', {
+        class: l.kind,
+        d: `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${(x1 + dx).toFixed(1)} ${y1.toFixed(1)}, ${(x2 - dx).toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`,
+      }));
+    }
+  }
+
+  /* ---------- 跳转与滚动 ---------- */
+
+  function revealTask(id) {
+    const t = byId.get(id);
+    if (!t) return;
+    for (const a of t.ancestors) board.collapsed.delete(a);
+    board.onlyMain = false;
+    document.getElementById('btnOnlyMain').classList.remove('on');
+    refreshBoard();
+    const col = board.cols.find((c) => c.st === t.status);
+    if (!col) return;
+    const idx = col.rows.findIndex((r) => r.type === 'task' && r.task.id === id);
+    if (idx < 0) return;
+    const h = col.heights.get(col.rows[idx].key + '|' + rowVariant(col.rows[idx])) ?? estimateOf(col.rows[idx]);
+    col.scroller.scrollTop = Math.max(0, col.offsets[idx] - col.scroller.clientHeight / 2 + h / 2);
+    paintCol(col, false);
+    flashCard(id);
+  }
+
+  function revealFirstChildIn(parentId, st) {
+    const child = byId.get(parentId).children.map((k) => byId.get(k)).find((c) => c.status === st);
+    if (child) revealTask(child.id);
+  }
+
+  /* ---------- 增删改 ---------- */
+
+  const toastEl = document.getElementById('toast');
+  let toastTimer = 0;
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('on'), 1900);
+  }
+
+  /** 统计跟着数据走：改一个任务，总览页的数字也要跟着动 */
+  function recomputeStats() {
+    stats.total = tasks.length;
+    stats.main = mains.length;
+    stats.mainDone = cnt(mains, 'done');
+    stats.sub = subs.length;
+    stats.subDone = cnt(subs, 'done');
+    stats.grand = grands.length;
+    stats.grandDone = cnt(grands, 'done');
+    stats.totalDone = cnt(tasks, 'done');
+    stats.byStatus = STATUSES.map((s) => ({ st: s, n: cnt(tasks, s) }));
+    renderStats();
+    renderSide();
+  }
+
+  function statusMenu(anchor, t) {
+    document.querySelectorAll('.st-menu').forEach((n) => n.remove());
+    const menu = document.createElement('div');
+    menu.className = 'st-menu';
+    const r = anchor.getBoundingClientRect();
+    Object.assign(menu.style, {
+      position: 'fixed', zIndex: 80, left: r.left + 'px', top: r.bottom + 4 + 'px',
+      background: 'var(--raised)', border: '1px solid var(--border-strong)', borderRadius: '8px',
+      boxShadow: 'var(--shadow)', padding: '4px', minWidth: '104px',
+    });
+    for (const st of STATUSES) {
+      const b = document.createElement('button');
+      b.textContent = STATUS_META[st].label;
+      Object.assign(b.style, {
+        display: 'block', width: '100%', textAlign: 'left', font: 'inherit', fontSize: '12px',
+        color: st === t.status ? STATUS_META[st].color : 'var(--text)',
+        background: 'transparent', border: 'none', borderRadius: '6px', padding: '5px 8px', cursor: 'pointer',
+      });
+      b.addEventListener('click', () => {
+        menu.remove();
+        const old = t.status;
+        t.status = st;
+        recomputeStats();
+        refreshBoard(t.id);
+        showToast(`「${t.title}」从「${STATUS_META[old].label}」移到「${STATUS_META[st].label}」`);
+      });
+      b.addEventListener('mouseenter', () => { b.style.background = 'var(--sunken)'; });
+      b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+      menu.appendChild(b);
+    }
+    document.body.appendChild(menu);
+    setTimeout(() => {
+      const close = (ev) => {
+        if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('pointerdown', close); }
+      };
+      document.addEventListener('pointerdown', close);
+    }, 0);
+  }
+
+  /* ---------- 模态框 ---------- */
+
+  const modalEl = document.getElementById('modal');
+  const modalBox = document.getElementById('modalBox');
+  let modalClose = null;
+
+  function openModal(html, onMount) {
+    modalBox.innerHTML = html;
+    modalEl.classList.add('on');
+    modalClose = () => { modalEl.classList.remove('on'); modalBox.innerHTML = ''; modalClose = null; };
+    onMount?.(modalBox, modalClose);
+  }
+  modalEl.addEventListener('click', (ev) => { if (ev.target === modalEl) modalClose?.(); });
+  window.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') modalClose?.(); });
+
+  /** 新建：明确的几步，回车不会误创建 */
+  function openCreate(defaults) {
+    const mainOptions = mains.map((m) => `<option value="${m.id}">${m.title}</option>`).join('');
+    const stOptions = STATUSES.map((s) => `<option value="${s}"${s === 'todo' ? ' selected' : ''}>${STATUS_META[s].label}</option>`).join('');
+    const depOptions = tasks.filter((t) => t.status !== 'done').map((t) => `<option value="${t.id}">${t.title}</option>`).join('');
+
+    openModal(`
+      <h3>新建任务</h3>
+      <div class="steps">归属决定它挂在谁下面：选「无（新建主任务）」就是一张主任务卡。回车不会直接创建，填完点右下角。</div>
+      <div class="cnt">
+        <div class="fld"><label>归属</label>
+          <select id="cParent"><option value="">无（新建主任务）</option>${mainOptions}</select></div>
+        <div class="fld"><label>标题</label><input id="cTitle" placeholder="一句话说清要做什么" /></div>
+        <div class="fld" style="display:flex;gap:10px">
+          <div style="flex:1"><label>状态</label><select id="cStatus">${stOptions}</select></div>
+          <div style="flex:1"><label>里程碑</label><select id="cMs">
+            ${MILESTONES.map((m) => `<option value="${m.id}"${m.id === 'M2' ? ' selected' : ''}>${m.name}</option>`).join('')}
+          </select></div>
+        </div>
+        <div class="fld"><label>标签（逗号分隔，可留空）</label><input id="cTags" placeholder="看板, 交互" /></div>
+        <div class="fld"><label>前置任务（可多选，Ctrl 点选）</label>
+          <select id="cDeps" multiple size="4" style="height:auto">${depOptions}</select></div>
+      </div>
+      <div class="err" id="cErr"></div>
+      <div class="foot">
+        <button data-close>取消</button>
+        <button class="primary" id="cOk">创建任务</button>
+      </div>
+    `, (box, close) => {
+      box.querySelector('#cParent').value = defaults?.parent ?? '';
+      box.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
+      box.querySelector('#cOk').addEventListener('click', () => {
+        const title = box.querySelector('#cTitle').value.trim();
+        const err = box.querySelector('#cErr');
+        if (!title) { err.textContent = '标题不能为空'; return; }
+        const parentId = box.querySelector('#cParent').value || null;
+        const deps = [...box.querySelector('#cDeps').selectedOptions].map((o) => o.value);
+        const id = 'n' + Date.now();
+        const t = addTask({
+          id,
+          parent: parentId ?? undefined,
+          depth: parentId ? byId.get(parentId).depth + 1 : 0,
+          title,
+          status: box.querySelector('#cStatus').value,
+          tags: box.querySelector('#cTags').value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+          milestone: box.querySelector('#cMs').value,
+          children: [], ancestors: [], deps: [], blockedBy: deps,
+        });
+        t.ord = ordSeq += 1;
+        t.size = 1;
+        let cur = parentId ? byId.get(parentId) : null;
+        while (cur) { t.ancestors.push(cur.id); cur = cur.parent ? byId.get(cur.parent) : null; }
+        t.root = t.ancestors.length ? t.ancestors[t.ancestors.length - 1] : t.id;
+        if (parentId) byId.get(parentId).children.push(id);
+        for (const d of deps) byId.get(d).deps.push(id);
+        if (parentId) for (const a of t.ancestors) byId.get(a).size += 1;
+        // 总览页统计与六边形图读的是这几个顶层数组，新建的也要进去
+        (t.depth === 0 ? mains : t.depth === 1 ? subs : grands).push(t);
+        close();
+        recomputeStats();
+        board.onlyMain = false;
+        document.getElementById('btnOnlyMain').classList.remove('on');
+        refreshBoard(id);
+        showToast(`已创建「${title}」`);
+      });
+    });
+  }
+
+  /** 删除规则：主任务下面还有子任务就不能删（不是隐藏按钮，是明确告知） */
+  function askDelete(id) {
+    const t = byId.get(id);
+    if (!t) return;
+    if (t.children.length) {
+      openModal(`
+        <h3>不能删除</h3>
+        <div class="cnt" style="color:var(--text-muted);line-height:1.8;font-size:12.5px">
+          「${t.title}」下面还有 <b>${t.children.length}</b> 个子任务。<br />
+          先把子任务删除或移走，才能删除这个主任务。
+        </div>
+        <div class="foot"><button class="primary" data-close>知道了</button></div>
+      `, (box, close) => box.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close)));
+      return;
+    }
+    openModal(`
+      <h3>删除任务</h3>
+      <div class="cnt" style="color:var(--text-muted);line-height:1.8;font-size:12.5px">
+        确定删除「${t.title}」？<br />删除后可以在回收站里还原（原型里不落库，只是从看板移除）。
+      </div>
+      <div class="foot">
+        <button data-close>取消</button>
+        <button class="danger" id="dOk">删除</button>
+      </div>
+    `, (box, close) => {
+      box.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
+      box.querySelector('#dOk').addEventListener('click', () => {
+        close();
+        removeTask(id);
+      });
+    });
+  }
+
+  function removeTask(id) {
+    const t = byId.get(id);
+    if (!t || t.children.length) return;
+    const i = tasks.indexOf(t);
+    if (i >= 0) tasks.splice(i, 1);
+    byId.delete(id);
+    for (const p of [t.parent, ...t.ancestors]) if (p && byId.get(p)) byId.get(p).children = byId.get(p).children.filter((k) => k !== id);
+    for (const x of tasks) {
+      x.blockedBy = x.blockedBy.filter((b) => b !== id);
+      x.deps = x.deps.filter((d) => d !== id);
+    }
+    // 顶层数组也要跟着更新（统计、六边形图、生成器都读它们）
+    for (const arr of [mains, subs, grands]) {
+      const j = arr.indexOf(t);
+      if (j >= 0) arr.splice(j, 1);
+    }
+    if (board.pinned === id) board.pinned = null;
+    if (view.drawer === id) closeDrawer();
+    recomputeStats();
+    refreshBoard();
+    showToast('已删除（原型不落库，刷新页面就回来）');
+  }
+
+  /* ---------- 详情抽屉（字段即改即生效） ---------- */
+
+  const drawer = document.getElementById('drawer');
+  const dHead = document.getElementById('dHead');
+  const dBody = document.getElementById('dBody');
+  const dFoot = document.getElementById('dFoot');
+
+  function openDrawer(id) {
+    const t = byId.get(id);
+    if (!t) return;
+    view.drawer = id;
+    board.pinned = id;          // 打开详情 = 钉住关系层（强聚焦）
+    drawer.classList.add('open');
+    drawer.setAttribute('aria-hidden', 'false');
+    const st = STATUS_META[t.status];
+
+    dHead.innerHTML = `
+      <div class="l1">
+        <span class="kind">${t.depth === 0 ? '主任务' : t.depth === 1 ? '子任务' : '孙任务'}</span>
+        <span class="status" style="--st:${st.color}">${st.label}</span>
+        <button class="close" data-close title="关闭（Esc）">×</button>
+      </div>
+    `;
+
+    const parents = ['', ...mains.filter((m) => m.id !== t.id).map((m) => m.id)];
+    dBody.innerHTML = `
+      <div class="fld"><label>标题</label><input id="fTitle" value="${t.title.replace(/"/g, '&quot;')}" /></div>
+      <div class="fld" style="display:flex;gap:10px">
+        <div style="flex:1"><label>状态</label><select id="fStatus">
+          ${STATUSES.map((s) => `<option value="${s}"${s === t.status ? ' selected' : ''}>${STATUS_META[s].label}</option>`).join('')}
+        </select></div>
+        <div style="flex:1"><label>里程碑</label><select id="fMs">
+          ${MILESTONES.map((m) => `<option value="${m.id}"${m.id === t.milestone ? ' selected' : ''}>${m.name}</option>`).join('')}
+        </select></div>
+      </div>
+      <div class="fld"><label>归属</label><select id="fParent">
+        ${parents.map((p) => `<option value="${p}"${(t.parent ?? '') === p ? ' selected' : ''}>${p ? byId.get(p).title : '无（主任务）'}</option>`).join('')}
+      </select>${t.children.length ? `<div class="hint">它自己有 ${t.children.length} 个子任务，不能改成别的任务的下级</div>` : ''}</div>
+      <div class="fld"><label>标签（逗号分隔）</label><input id="fTags" value="${t.tags.join(', ')}" /></div>
+      <div class="fld"><label>前置任务（挡着它的）</label>
+        <div class="deps-list" id="fDeps">
+          ${t.blockedBy.map((b) => `<span class="dep-chip" data-go="${b}">${byId.get(b).title}<span class="x" data-un="${b}">×</span></span>`).join('') || '<span class="hint">没有前置</span>'}
+        </div>
+        <select id="fAddDep" style="margin-top:6px">
+          <option value="">＋ 添加前置…</option>
+          ${tasks.filter((x) => x.id !== t.id && !t.blockedBy.includes(x.id) && !t.ancestors.includes(x.id)).map((x) => `<option value="${x.id}">${x.title}</option>`).join('')}
+        </select>
+      </div>
+      ${t.children.length ? `<div class="fld"><label>子任务 ${t.children.length}</label>
+        <div class="deps-list">${t.children.map((k) => {
+          const c = byId.get(k);
+          return `<span class="dep-chip" data-go="${c.id}">${c.title}<span style="color:${STATUS_META[c.status].color}">·</span></span>`;
+        }).join('')}</div></div>` : ''}
+      ${t.deps.length ? `<div class="fld"><label>后续任务（它挡着的）</label>
+        <div class="deps-list">${t.deps.map((k) => `<span class="dep-chip" data-go="${k}">${byId.get(k).title}</span>`).join('')}</div></div>` : ''}
+      <div class="fld"><label>描述</label><textarea id="fDesc" placeholder="写清楚验收标准…">${t.desc ?? ''}</textarea></div>
+      <div class="fld"><label>时间</label>
+        <div class="hint">创建 ${t.created ?? '—'} · 截止 ${t.due ?? '未设置'}（这一版日期不是重点，先后顺序更重要）</div>
+      </div>
+    `;
+
+    dFoot.innerHTML = `
+      <button class="danger" id="fDel">删除</button>
+      <span class="saved" id="fSaved">改动即生效</span>
+    `;
+
+    const mark = () => {
+      document.getElementById('fSaved').textContent = '已更新 · ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      recomputeStats();
+      refreshBoard(id);
+    };
+
+    dBody.querySelector('[data-close]')?.addEventListener('click', closeDrawer);
+    dHead.querySelector('[data-close]')?.addEventListener('click', closeDrawer);
+    dBody.querySelector('#fTitle').addEventListener('input', (ev) => { t.title = ev.target.value; mark(); });
+    dBody.querySelector('#fStatus').addEventListener('change', (ev) => {
+      t.status = ev.target.value;
+      dHead.querySelector('.status').textContent = STATUS_META[t.status].label;
+      dHead.querySelector('.status').style.setProperty('--st', STATUS_META[t.status].color);
+      mark();
+    });
+    dBody.querySelector('#fMs').addEventListener('change', (ev) => { t.milestone = ev.target.value; mark(); });
+    dBody.querySelector('#fParent').addEventListener('change', (ev) => {
+      const np = ev.target.value || null;
+      if (t.depth > 0 && byId.get(t.parent)) byId.get(t.parent).children = byId.get(t.parent).children.filter((k) => k !== id);
+      t.parent = np ?? undefined;
+      t.depth = np ? byId.get(np).depth + 1 : 0;
+      if (np) byId.get(np).children.push(id);
+      t.ancestors = [];
+      let cur = np ? byId.get(np) : null;
+      while (cur) { t.ancestors.push(cur.id); cur = cur.parent ? byId.get(cur.parent) : null; }
+      t.root = t.ancestors.length ? t.ancestors[t.ancestors.length - 1] : t.id;
+      mark();
+      showToast('已调整归属');
+    });
+    dBody.querySelector('#fTags').addEventListener('input', (ev) => {
+      t.tags = ev.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+      mark();
+    });
+    dBody.querySelector('#fAddDep').addEventListener('change', (ev) => {
+      const v = ev.target.value;
+      if (!v) return;
+      t.blockedBy.push(v);
+      byId.get(v).deps.push(id);
+      openDrawer(id);
+      mark();
+    });
+    dBody.querySelectorAll('[data-un]').forEach((x) => x.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const b = x.dataset.un;
+      t.blockedBy = t.blockedBy.filter((k) => k !== b);
+      byId.get(b).deps = byId.get(b).deps.filter((k) => k !== id);
+      openDrawer(id);
+      mark();
+    }));
+    dBody.querySelectorAll('[data-go]').forEach((x) => x.addEventListener('click', (ev) => {
+      if (ev.target.dataset.un) return;
+      ev.stopPropagation();
+      const target = x.dataset.go;
+      openDrawer(target);
+      revealTask(target);
+    }));
+    dFoot.querySelector('#fDel').addEventListener('click', () => askDelete(id));
+
+    paintRelations();
+  }
+
+  function closeDrawer() {
+    view.drawer = null;
+    board.pinned = null;
+    drawer.classList.remove('open');
+    drawer.setAttribute('aria-hidden', 'true');
+    paintRelations();
+  }
+
+  /* ---------- 任务台的控件 ---------- */
+
+  document.getElementById('btnNew').addEventListener('click', () => openCreate());
+  document.getElementById('btnOnlyMain').addEventListener('click', (ev) => {
+    board.onlyMain = !board.onlyMain;
+    ev.currentTarget.classList.toggle('on', board.onlyMain);
+    refreshBoard();
+  });
+  document.getElementById('btnExpandAll').addEventListener('click', () => {
+    board.collapsed.clear();
+    refreshBoard();
+  });
+  document.getElementById('btnCollapseAll').addEventListener('click', () => {
+    for (const t of tasks) if (t.children.length) board.collapsed.add(t.id);
+    refreshBoard();
+  });
+  let qTimer = 0;
+  document.getElementById('q').addEventListener('input', (ev) => {
+    board.query = ev.target.value;
+    clearTimeout(qTimer);
+    qTimer = setTimeout(() => refreshBoard(), 120);
+  });
+  window.addEventListener('resize', () => { if (board.built) refreshBoard(); });
+
+  /* ==================================================================
+     7) 启动 + 自检
+     ================================================================== */
+
+  renderStats();
+  renderSide();
+  drawMap();
+
+  function readHash() {
+    const raw = location.hash.replace(/^#/, '');
+    if (!raw) return {};
+    return Object.fromEntries(raw.split('&').filter(Boolean).map((kv) => {
+      const i = kv.indexOf('=');
+      return i < 0 ? [kv, '1'] : [kv.slice(0, i), decodeURIComponent(kv.slice(i + 1))];
+    }));
+  }
+  const hash = readHash();
+
+  if (hash.page === 'tasks') document.querySelector('.side .nav[data-page="tasks"]').click();
+  if (hash.task) setTimeout(() => { document.querySelector('.side .nav[data-page="tasks"]').click(); revealTask(hash.task); }, 160);
+  if (hash.drawer) setTimeout(() => { document.querySelector('.side .nav[data-page="tasks"]').click(); openDrawer(hash.drawer); }, 260);
+  if (hash.collapse) setTimeout(() => { for (const t of tasks) if (t.children.length) board.collapsed.add(t.id); refreshBoard(); }, 200);
+  if (hash.new) setTimeout(() => { document.querySelector('.side .nav[data-page="tasks"]').click(); openCreate(); }, 220);
+  if (hash.hoverTask) setTimeout(() => { document.querySelector('.side .nav[data-page="tasks"]').click(); board.hover = hash.hoverTask; paintRelations(); }, 420);
+  if (hash.drill) setTimeout(() => drill(hash.drill), 120);
+  if (hash.hover) setTimeout(() => setHover(hash.hover), 700);
+
+  /** 自检：数字自洽 / 几何不变量 / DOM 数量 —— 这些靠看截图判断不了 */
+  function selfCheck() {
+    const problems = [];
+
+    // 1) 统计自洽（统计页最容易出的错就是数字对不上）
+    const sumStatus = stats.byStatus.reduce((a, b) => a + b.n, 0);
+    if (sumStatus !== stats.total) problems.push(`状态数之和 ${sumStatus} ≠ 总数 ${stats.total}`);
+    if (stats.main !== mains.length) problems.push('主任务数不一致');
+    if (stats.mainDone > stats.main) problems.push('主任务完成数大于主任务数');
+    if (stats.subDone > stats.sub) problems.push('子任务完成数大于子任务数');
+    for (const m of MILESTONES) {
+      const n = tasks.filter((t) => t.milestone === m.id).length;
+      if (!n) problems.push(`里程碑 ${m.id} 没有任务`);
+    }
+    if (tasks.some((t) => t.deps.some((d) => !byId.get(d)))) problems.push('依赖指向了不存在的任务');
+
+    // 2) 地图：48 个任务必须落在 48 个互不相同的蜂窝格子里（六边形网格里这是不重叠的充要条件）
+    let mapHexes = 0;
+    let cellDupe = [];
+    if (view.mode === 'map') {
+      mapHexes = svg.querySelectorAll('g.hx').length;
+      const seen = new Set();
+      mapOrder.slice(0, mapCells.length).forEach((t, i) => {
+        const c = mapCells[i];
+        const k = `${c.q},${c.r}`;
+        if (seen.has(k)) cellDupe.push(t.id);
+        seen.add(k);
+      });
+      if (cellDupe.length) problems.push(`地图格子重复：${cellDupe.slice(0, 3).join(',')}`);
+      if (mapHexes !== Math.min(mains.length, mapCells.length)) {
+        problems.push(`地图画了 ${mapHexes} 格，期望 ${Math.min(mains.length, mapCells.length)}`);
+      }
+      // 路径里的 NaN 是最典型的"坐标算错"信号
+      for (const p of svg.querySelectorAll('path')) {
+        if (String(p.getAttribute('d')).includes('NaN')) { problems.push('地图里有 NaN 路径'); break; }
+      }
+      // 格子里的字不能超出六边形（量文字包围盒）
+      for (const tx of svg.querySelectorAll('text.hx-label')) {
+        const bb = tx.getBBox();
+        if (bb.width > MAP_S * 1.5) problems.push(`地图文字过宽：${tx.textContent} ${bb.width.toFixed(0)}px`);
+      }
+    }
+
+    // 3) 下钻：用六边形的真实几何判定有没有互相压（共边距离 √3(s1+s2)/2）
+    let hexRecords = [];
+    if (view.mode === 'cluster') {
+      for (const n of hexes.children) {
+        hexRecords.push({
+          id: n.dataset.id,
+          x: Number(n.dataset.x),
+          y: Number(n.dataset.y),
+          s: Number(n.dataset.size),
+        });
+      }
+      for (let i = 0; i < hexRecords.length; i += 1) {
+        for (let j = i + 1; j < hexRecords.length; j += 1) {
+          const a = hexRecords[i];
+          const b = hexRecords[j];
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          const need = hexGap(a.s, b.s);
+          if (d < need) problems.push(`六边形互相压：${a.id} / ${b.id}（${d.toFixed(1)} < ${need.toFixed(1)}）`);
+        }
+      }
+      // 标题被裁（固定尺寸的六边形最容易出这个；减过字的按设计走，不算问题）
+      for (const n of hexes.children) {
+        const tl = n.querySelector('.tl');
+        if (tl && tl.scrollHeight > tl.clientHeight + 1) {
+          problems.push(`${n.dataset.id} 标题被裁（减字后仍放不下）`);
+        }
+      }
+    }
+
+    // 4) 任务台：虚拟滚动的账要平、行位置要对得上偏移、关系层不能有 NaN
+    let boardInfo = null;
+    if (board.built) {
+      const cols = [];
+      for (const col of board.cols) {
+        const sum = col.rows.reduce((a, r) => a + (col.heights.get(r.key + '|' + rowVariant(r)) ?? estimateOf(r)), 0) + 6;
+        if (Math.abs(sum - col.total) > 2) problems.push(`${col.st} 列高度账不平：算出来 ${sum}，spacer ${col.total}`);
+        for (const [k, node] of col.nodes) {
+          const i = Number(node.dataset.idx);
+          if (col.offsets[i] === undefined) { problems.push(`${col.st} 渲染了一行不在列表里的卡片：${k}`); continue; }
+          if (Math.abs(parseFloat(node.style.top) - col.offsets[i]) > 1.5) {
+            problems.push(`${col.st} 的行位置与偏移对不上：${k}`);
+          }
+        }
+        cols.push({ st: col.st, rows: col.rows.length, dom: col.nodes.size, h: Math.round(col.total) });
+      }
+      for (const p of relLayer.querySelectorAll('path')) {
+        if (String(p.getAttribute('d')).includes('NaN')) { problems.push('关系层出现 NaN 路径'); break; }
+      }
+      boardInfo = {
+        columns: cols,
+        rowsTotal: cols.reduce((a, c) => a + c.rows, 0),
+        domTotal: cols.reduce((a, c) => a + c.dom, 0),
+        collapsed: board.collapsed.size,
+        onlyMain: board.onlyMain,
+        query: board.query,
+        drawer: view.drawer,
+        relLines: relLayer.querySelectorAll('path').length,
+      };
+    }
+
+    const report = {
+      mode: view.mode,
+      focus: view.focus,
+      stack: view.stack.length,
+      tilt: view.tilt,
+      spin: Number(view.spin.toFixed(1)),
+      zoom: Number(getComputedStyle(zoomEl).getPropertyValue('--zoom') || 0),
+      totals: {
+        tasks: stats.total, main: stats.main, sub: stats.sub, grand: stats.grand,
+        done: stats.totalDone, byStatus: stats.byStatus.map((x) => `${x.st}:${x.n}`).join(','),
+      },
+      mapHexes,
+      clusterHexes: hexRecords.length,
+      maxHexSize: hexRecords.length ? Math.max(...hexRecords.map((x) => x.s)) : 0,
+      depArcs: svg.querySelectorAll('.dep-arc').length,
+      board: boardInfo,
+      problems,
+    };
+
+    const pre = document.createElement('pre');
+    pre.id = 'selfcheck';
+    pre.textContent = 'SELFCHECK ' + JSON.stringify(report);
+    document.body.appendChild(pre);
+  }
+
+  if (hash.check) setTimeout(selfCheck, 2200);
+
+  // 调试/验证用的钩子：check-mock.cjs 靠它做程序化断言（点哪个任务、量什么数，不用靠眼睛）
+  window.__mock = {
+    tasks, byId, view, drill, upOne, setHover, stats, mains, progressOf,
+    board, refreshBoard, paintRelations, openDrawer, closeDrawer, askDelete, removeTask,
+    openCreate, revealTask, toggleCollapse, recomputeStats, findTask: (id) => byId.get(id),
+  };
+})();
+</script>
+</body>
+</html>

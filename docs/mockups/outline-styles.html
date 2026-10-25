@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>工作大纲：四种思维导图样式参考</title>
+    <style>
+      :root {
+        --ink: #1f2329;
+        --muted: #6b7280;
+        --line: #d7dbe0;
+        --bg: #f6f7f9;
+        --card: #ffffff;
+        --accent: #2080f0;
+        --ok: #18a058;
+        --warn: #f0a020;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 28px 32px 40px;
+        background: var(--bg);
+        color: var(--ink);
+        font: 14px/1.6 "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+      }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      .sub { color: var(--muted); font-size: 12.5px; margin: 0 0 22px; }
+      .grid { display: flex; flex-direction: column; gap: 18px; }
+      .style {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 16px 6px;
+      }
+      .style h2 { font-size: 15px; margin: 0 0 2px; }
+      .style h2 em { font-style: normal; color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 8px; }
+      .style p { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+      .style p b { color: var(--ink); }
+      svg { display: block; width: 100%; height: auto; }
+      .tag {
+        display: inline-block;
+        padding: 0 6px;
+        border-radius: 4px;
+        background: #eef2f7;
+        color: #48505a;
+        font-size: 11px;
+        margin-right: 4px;
+      }
+      text { font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif; }
+    </style>
+  </head>
+  <body>
+    <h1>工作大纲 · 四种思维导图样式</h1>
+    <p class="sub">
+      数据用的是同一个项目的真实结构（项目 → 阶段 → 任务 → 子任务），方便横向比较。
+      每张图下面写了这种样式的手感与代价，选一个方向我就按它实现。
+    </p>
+
+    <div class="grid">
+      <!-- ============ A. 双侧放射 ============ -->
+      <section class="style">
+        <h2>A. 双侧放射式 <em>XMind / MindManager 的经典样子</em></h2>
+        <p>
+          <span class="tag">中心在中间</span><span class="tag">左右分支</span><span class="tag">曲线连接</span>
+          <b>手感</b>：最像"思维导图"，看整体结构很舒服。
+          <b>代价</b>：节点一多就往两边长，宽屏才够用；编辑时要处理左右两侧的排版方向。
+        </p>
+        <svg viewBox="0 0 1180 300" role="img" aria-label="双侧放射式思维导图">
+          <defs>
+            <marker id="a-dot" markerWidth="8" markerHeight="8" refX="4" refY="4">
+              <circle cx="4" cy="4" r="3" fill="#2080f0" />
+            </marker>
+          </defs>
+          <!-- 中心 -->
+          <rect x="490" y="126" width="200" height="48" rx="24" fill="#2080f0" />
+          <text x="590" y="156" fill="#fff" font-size="15" text-anchor="middle">e2e 后端项目</text>
+
+          <!-- 右侧分支 -->
+          <path d="M690 150 C 730 150, 730 62, 770 62" stroke="#2080f0" stroke-width="1.6" fill="none" />
+          <path d="M690 150 C 730 150, 730 150, 770 150" stroke="#2080f0" stroke-width="1.6" fill="none" />
+          <path d="M690 150 C 730 150, 730 238, 770 238" stroke="#2080f0" stroke-width="1.6" fill="none" />
+          <rect x="770" y="42" width="150" height="38" rx="8" fill="#eaf3ff" stroke="#b9d6ff" />
+          <text x="845" y="66" fill="#1f2329" font-size="13" text-anchor="middle">需求与接口</text>
+          <rect x="770" y="130" width="150" height="38" rx="8" fill="#eaf3ff" stroke="#b9d6ff" />
+          <text x="845" y="154" fill="#1f2329" font-size="13" text-anchor="middle">数据模型</text>
+          <rect x="770" y="218" width="150" height="38" rx="8" fill="#eaf3ff" stroke="#b9d6ff" />
+          <text x="845" y="242" fill="#1f2329" font-size="13" text-anchor="middle">接口实现</text>
+          <path d="M920 61 C 950 61, 950 30, 975 30" stroke="#9db8d6" stroke-width="1.4" fill="none" />
+          <path d="M920 61 C 950 61, 950 92, 975 92" stroke="#9db8d6" stroke-width="1.4" fill="none" />
+          <text x="982" y="34" fill="#6b7280" font-size="12">确认接口清单</text>
+          <text x="982" y="96" fill="#6b7280" font-size="12">确认错误码</text>
+
+          <!-- 左侧分支 -->
+          <path d="M490 150 C 450 150, 450 74, 410 74" stroke="#18a058" stroke-width="1.6" fill="none" />
+          <path d="M490 150 C 450 150, 450 226, 410 226" stroke="#f0a020" stroke-width="1.6" fill="none" />
+          <rect x="250" y="54" width="160" height="38" rx="8" fill="#eaf7ef" stroke="#b7e2c6" />
+          <text x="330" y="78" fill="#1f2329" font-size="13" text-anchor="middle">已上线（2）</text>
+          <rect x="250" y="206" width="160" height="38" rx="8" fill="#fdf3e3" stroke="#f5d9a8" />
+          <text x="330" y="230" fill="#1f2329" font-size="13" text-anchor="middle">联调中（3）</text>
+          <text x="240" y="78" fill="#6b7280" font-size="12" text-anchor="end">环境搭建</text>
+          <text x="240" y="230" fill="#6b7280" font-size="12" text-anchor="end">对接前端</text>
+        </svg>
+      </section>
+
+      <!-- ============ B. 水平树 ============ -->
+      <section class="style">
+        <h2>B. 水平树（左根右叶） <em>ProcessOn / 百度脑图 / 幕布导图</em></h2>
+        <p>
+          <span class="tag">根在左侧</span><span class="tag">逐级向右</span><span class="tag">可折叠</span>
+          <b>手感</b>：最适合"工作大纲"—— 读起来像一份层层展开的计划书，和任务列表能一一对应。
+          <b>代价</b>：深层节点会往右跑，需要横向滚动或折叠。
+        </p>
+        <svg viewBox="0 0 1180 320" role="img" aria-label="水平树思维导图">
+          <rect x="20" y="130" width="176" height="52" rx="10" fill="#2080f0" />
+          <text x="108" y="161" fill="#fff" font-size="14" text-anchor="middle">e2e 后端项目</text>
+
+          <!-- 一级 -->
+          <path d="M196 156 C 226 156, 226 54, 256 54" stroke="#c3ccd6" stroke-width="1.6" fill="none" />
+          <path d="M196 156 C 226 156, 226 156, 256 156" stroke="#c3ccd6" stroke-width="1.6" fill="none" />
+          <path d="M196 156 C 226 156, 226 258, 256 258" stroke="#c3ccd6" stroke-width="1.6" fill="none" />
+
+          <rect x="256" y="34" width="150" height="40" rx="8" fill="#eef2f7" stroke="#d7dbe0" />
+          <text x="331" y="59" fill="#1f2329" font-size="13" text-anchor="middle">需求与接口 ⌄</text>
+          <rect x="256" y="136" width="150" height="40" rx="8" fill="#eef2f7" stroke="#d7dbe0" />
+          <text x="331" y="161" fill="#1f2329" font-size="13" text-anchor="middle">数据模型 ⌄</text>
+          <rect x="256" y="238" width="150" height="40" rx="8" fill="#eef2f7" stroke="#d7dbe0" />
+          <text x="331" y="263" fill="#1f2329" font-size="13" text-anchor="middle">接口实现 ⌄</text>
+
+          <!-- 二级 -->
+          <path d="M406 54 C 436 54, 436 20, 466 20" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M406 54 C 436 54, 436 54, 466 54" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M406 54 C 436 54, 436 88, 466 88" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <text x="474" y="25" fill="#3f4650" font-size="12.5">确认接口清单</text>
+          <text x="474" y="59" fill="#3f4650" font-size="12.5">确认字段与类型</text>
+          <text x="474" y="93" fill="#3f4650" font-size="12.5">确认错误码与鉴权</text>
+
+          <path d="M406 156 C 436 156, 436 140, 466 140" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M406 156 C 436 156, 436 176, 466 176" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <text x="474" y="145" fill="#3f4650" font-size="12.5">设计表结构与索引</text>
+          <text x="474" y="181" fill="#3f4650" font-size="12.5">写清老数据怎么迁移</text>
+
+          <path d="M406 258 C 436 258, 436 232, 466 232" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M406 258 C 436 258, 436 258, 466 258" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M406 258 C 436 258, 436 292, 466 292" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <text x="474" y="237" fill="#3f4650" font-size="12.5">实现主流程接口</text>
+          <text x="474" y="263" fill="#3f4650" font-size="12.5">参数校验与错误处理</text>
+          <text x="474" y="297" fill="#3f4650" font-size="12.5">关键路径写测试</text>
+
+          <!-- 状态点 -->
+          <circle cx="700" cy="140" r="4.5" fill="#18a058" />
+          <text x="712" y="145" fill="#6b7280" font-size="12">已完成</text>
+          <circle cx="700" cy="258" r="4.5" fill="#2080f0" />
+          <text x="712" y="263" fill="#6b7280" font-size="12">进行中</text>
+          <circle cx="700" cy="292" r="4.5" fill="#c3ccd6" />
+          <text x="712" y="297" fill="#6b7280" font-size="12">未开始</text>
+        </svg>
+      </section>
+
+      <!-- ============ C. 极简大纲树 ============ -->
+      <section class="style">
+        <h2>C. 极简大纲树 <em>markmap（Markdown 直接变导图）</em></h2>
+        <p>
+          <span class="tag">细线</span><span class="tag">无边框</span><span class="tag">像文档</span>
+          <b>手感</b>：最干净，节点就是文字，靠缩进+细线表达层级；适合"每天盯着看"的工作大纲。
+          <b>代价</b>：状态、优先级、负责人这些信息要靠小色点/小字补充，不如卡片直观。
+        </p>
+        <svg viewBox="0 0 1180 260" role="img" aria-label="极简大纲树">
+          <text x="20" y="140" fill="#111827" font-size="15" font-weight="600">e2e 后端项目</text>
+          <path d="M150 134 C 175 134, 175 44, 200 44" stroke="#9aa4b2" stroke-width="1.4" fill="none" />
+          <path d="M150 134 C 175 134, 175 134, 200 134" stroke="#9aa4b2" stroke-width="1.4" fill="none" />
+          <path d="M150 134 C 175 134, 175 224, 200 224" stroke="#9aa4b2" stroke-width="1.4" fill="none" />
+
+          <text x="200" y="49" fill="#111827" font-size="13.5" font-weight="600">需求与接口</text>
+          <path d="M300 44 C 320 44, 320 22, 340 22" stroke="#c3ccd6" stroke-width="1.2" fill="none" />
+          <path d="M300 44 C 320 44, 320 66, 340 66" stroke="#c3ccd6" stroke-width="1.2" fill="none" />
+          <text x="340" y="27" fill="#374151" font-size="12.5">确认接口清单</text>
+          <text x="340" y="71" fill="#374151" font-size="12.5">确认错误码与鉴权</text>
+
+          <text x="200" y="139" fill="#111827" font-size="13.5" font-weight="600">数据模型</text>
+          <path d="M276 134 C 296 134, 296 112, 316 112" stroke="#c3ccd6" stroke-width="1.2" fill="none" />
+          <path d="M276 134 C 296 134, 296 156, 316 156" stroke="#c3ccd6" stroke-width="1.2" fill="none" />
+          <text x="316" y="117" fill="#374151" font-size="12.5">设计表结构与索引</text>
+          <text x="316" y="161" fill="#374151" font-size="12.5">老数据迁移方案</text>
+
+          <text x="200" y="229" fill="#111827" font-size="13.5" font-weight="600">接口实现</text>
+          <path d="M276 224 C 296 224, 296 202, 316 202" stroke="#c3ccd6" stroke-width="1.2" fill="none" />
+          <path d="M276 224 C 296 224, 296 246, 316 246" stroke="#c3ccd6" stroke-width="1.2" fill="none" />
+          <text x="316" y="207" fill="#374151" font-size="12.5">实现主流程接口</text>
+          <text x="316" y="251" fill="#374151" font-size="12.5">参数校验与错误处理</text>
+
+          <circle cx="560" cy="22" r="3.5" fill="#18a058" />
+          <circle cx="560" cy="112" r="3.5" fill="#2080f0" />
+          <circle cx="560" cy="202" r="3.5" fill="#c3ccd6" />
+          <text x="572" y="26" fill="#6b7280" font-size="11.5">已完成</text>
+          <text x="572" y="116" fill="#6b7280" font-size="11.5">进行中</text>
+          <text x="572" y="206" fill="#6b7280" font-size="11.5">未开始</text>
+        </svg>
+      </section>
+
+      <!-- ============ D. 组织架构式 ============ -->
+      <section class="style">
+        <h2>D. 自上而下的树（组织架构式） <em>Org chart / 甘特大纲</em></h2>
+        <p>
+          <span class="tag">根在上</span><span class="tag">正交连线</span><span class="tag">层级清楚</span>
+          <b>手感</b>：层级关系一眼看懂，适合"阶段 → 任务"这种不深但很宽的结构。
+          <b>代价</b>：宽度有限，任务多时会横向挤；子任务多时容易变成一大排。
+        </p>
+        <svg viewBox="0 0 1180 300" role="img" aria-label="自上而下的树">
+          <rect x="500" y="16" width="180" height="44" rx="8" fill="#2080f0" />
+          <text x="590" y="44" fill="#fff" font-size="14" text-anchor="middle">e2e 后端项目</text>
+
+          <path d="M590 60 V 86 H 250 V 106" stroke="#c3ccd6" stroke-width="1.6" fill="none" />
+          <path d="M590 60 V 86 H 590 V 106" stroke="#c3ccd6" stroke-width="1.6" fill="none" />
+          <path d="M590 60 V 86 H 930 V 106" stroke="#c3ccd6" stroke-width="1.6" fill="none" />
+
+          <rect x="175" y="106" width="150" height="40" rx="8" fill="#eef2f7" stroke="#d7dbe0" />
+          <text x="250" y="131" fill="#1f2329" font-size="13" text-anchor="middle">需求与接口</text>
+          <rect x="515" y="106" width="150" height="40" rx="8" fill="#eef2f7" stroke="#d7dbe0" />
+          <text x="590" y="131" fill="#1f2329" font-size="13" text-anchor="middle">数据模型</text>
+          <rect x="855" y="106" width="150" height="40" rx="8" fill="#eef2f7" stroke="#d7dbe0" />
+          <text x="930" y="131" fill="#1f2329" font-size="13" text-anchor="middle">接口实现</text>
+
+          <path d="M250 146 V 176 H 150 V 200" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M250 146 V 176 H 250 V 200" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M250 146 V 176 H 350 V 200" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <text x="150" y="218" fill="#3f4650" font-size="12" text-anchor="middle">接口清单</text>
+          <text x="250" y="218" fill="#3f4650" font-size="12" text-anchor="middle">字段类型</text>
+          <text x="350" y="218" fill="#3f4650" font-size="12" text-anchor="middle">错误码</text>
+
+          <path d="M590 146 V 176 H 500 V 200" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M590 146 V 176 H 590 V 200" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M590 146 V 176 H 680 V 200" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <text x="500" y="218" fill="#3f4650" font-size="12" text-anchor="middle">表结构</text>
+          <text x="590" y="218" fill="#3f4650" font-size="12" text-anchor="middle">索引</text>
+          <text x="680" y="218" fill="#3f4650" font-size="12" text-anchor="middle">数据迁移</text>
+
+          <path d="M930 146 V 176 H 840 V 200" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M930 146 V 176 H 930 V 200" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <path d="M930 146 V 176 H 1020 V 200" stroke="#dfe4ea" stroke-width="1.4" fill="none" />
+          <text x="840" y="218" fill="#3f4650" font-size="12" text-anchor="middle">主流程接口</text>
+          <text x="930" y="218" fill="#3f4650" font-size="12" text-anchor="middle">参数校验</text>
+          <text x="1020" y="218" fill="#3f4650" font-size="12" text-anchor="middle">写测试</text>
+        </svg>
+      </section>
+    </div>
+    <script>
+      // ?only=A|B|C|D 只显示某一节（给逐张截图用），?hero=0 去掉页头
+      const params = new URLSearchParams(location.search);
+      const only = (params.get('only') || '').toUpperCase();
+      if (only) {
+        document.querySelectorAll('.style').forEach((el, index) => {
+          const key = String.fromCharCode(65 + index);
+          if (key !== only) el.remove();
+        });
+      }
+      if (params.get('hero') === '0') document.querySelectorAll('h1, .sub').forEach((el) => el.remove());
+    </script>
+  </body>
+</html>

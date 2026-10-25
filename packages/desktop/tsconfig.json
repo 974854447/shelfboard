@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node", "electron-vite/node"],
+    "jsx": "preserve",
+    "paths": {
+      "@renderer/*": ["./src/renderer/src/*"],
+      "@pm-studio/shared": ["../shared/src/index.ts"],
+      "@pm-studio/server": ["../server/src/index.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.vue",
+    "tests/**/*.ts",
+    "electron.vite.config.ts",
+    "scripts/**/*.ts"
+  ]
+}
