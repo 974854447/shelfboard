@@ -11,4 +11,13 @@ logs/
 Thumbs.db
 .vite/
 release/
+# 打包产物的临时副本 / 别处拷出去再拷回来的目录（例如 release-0.2.2/）：
+# 这些是几百 MB 的安装包，GitHub 单文件上限 100 MB，一旦提交就会把推送卡死。
+release-*/
+# 冒烟测试 / 探针脚本留下的 Electron 用户数据目录（.tmp-portable-smoke/ 之类）
+.tmp-*/
+# 安装包与可执行产物一律不进仓库（没有源码级的 exe/dll）
+*.exe
+*.dll
+*.blockmap
 
